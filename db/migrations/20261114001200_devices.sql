@@ -7,7 +7,7 @@ create table public.device_tokens (
 );
 create index on public.device_tokens(volunteer_id);
 alter table public.device_tokens enable row level security;
-create policy device_tokens_own on public.device_tokens for all to authenticated
+create policy device_tokens_own on public.device_tokens for all to rumfa_api
   using (volunteer_id = app.my_id()) with check (volunteer_id = app.my_id());
 
 create or replace function public.register_device(p_token text, p_platform text) returns void

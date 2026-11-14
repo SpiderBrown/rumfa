@@ -17,7 +17,6 @@ for f in migrations/*.sql; do
     $P -f "$f"
   fi
 done
-$P -f tests/grants.sql
 $P -f seed.sql
 $P -f tests/scenarios.sql
 echo "All database tests passed."

@@ -86,6 +86,8 @@ begin
     if exists (select 1 from pg_roles where rolname = 'anon') then
       execute format('revoke all on function public.%s from anon, authenticated', f);
     end if;
-    execute format('grant execute on function public.%s to service_role', f);
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+      execute format('revoke all on function public.%s from service_role', f);
+    end if;
   end loop;
 end $$;

@@ -60,7 +60,7 @@ The backend is being moved to a **NestJS API in front of everything**. This repo
 npm test
 ```
 
-This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`) and the database scenario tests (`supabase/tests/run.sh`, which needs a local Postgres with `createdb`).
+This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`) and the database scenario tests (`db/tests/run.sh`, which needs a local Postgres with `createdb`).
 
 ## Set up a Supabase project
 

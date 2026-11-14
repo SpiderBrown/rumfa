@@ -98,5 +98,5 @@ Deno.serve(handler(async (req) => {
   }
 
   // Anything else (e.g. someone calling the number back)
-  return xml('<Say>Thank you for calling ALAWA. Please use the app or call your coordinator.</Say>');
+  return xml('<Say>Thank you for calling. Please use the app or call your coordinator.</Say>');
 }));

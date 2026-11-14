@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Network } from '@capacitor/network';
-import { encodeCallbackSms, encodeIncidentSms, encodeResultSms, type Severity } from '@alawa/shared';
+import { encodeCallbackSms, encodeIncidentSms, encodeResultSms, type Severity } from '@rumfa/shared';
 import { Supa } from './supa';
 
 /**
@@ -22,7 +22,7 @@ export interface OutItem {
   label: string;              // shown in the "Waiting to send" list
 }
 
-const DB = 'alawa-outbox';
+const DB = 'rumfa-outbox';
 const STORE = 'items';
 const SMS_OFFER_AFTER_MS = 2 * 60_000;
 
@@ -100,7 +100,7 @@ export class Outbox {
   async sendBySms(i: OutItem) {
     const body = encodeURIComponent(this.smsText(i));
     const sep = /iPhone|iPad/.test(navigator.userAgent) ? '&' : '?';
-    window.location.href = `sms:${window.ALAWA_CONFIG.smsNumber}${sep}body=${body}`;
+    window.location.href = `sms:${window.RUMFA_CONFIG.smsNumber}${sep}body=${body}`;
     i.smsSentAt = Date.now();
     // Results stay queued so the photo still uploads later (the server merges them);
     // incidents and callbacks without photos are done once the SMS is sent.

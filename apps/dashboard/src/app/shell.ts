@@ -33,7 +33,7 @@ const NAV: NavItem[] = [
   template: `
   <mat-sidenav-container class="shell">
     <mat-sidenav mode="side" opened class="nav">
-      <div class="brand"><mat-icon>shield</mat-icon><span>ALAWA</span></div>
+      <div class="brand"><mat-icon>shield</mat-icon><span>{{ supa.brand() }}</span></div>
       <mat-nav-list>
         @for (n of nav(); track n.path) {
           <a mat-list-item [routerLink]="n.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: n.path === '/irev' }">

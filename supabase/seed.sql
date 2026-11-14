@@ -12,6 +12,8 @@ select w.code || '-' || lpad(n::text, 3, '0'), w.code, 'Unit ' || n, 400 + n * 2
 on conflict do nothing;
 
 insert into public.tenants (id, name) values ('a1a1a1a1-0000-4000-8000-000000000001', 'ALAWA (dev)') on conflict do nothing;
+-- Short name shown to the client's people in the apps and at the start of every SMS
+update public.tenants set settings = settings || '{"brand": "ALAWA"}' where id = 'a1a1a1a1-0000-4000-8000-000000000001';
 insert into public.tenant_coverage values ('a1a1a1a1-0000-4000-8000-000000000001', 'national', 'NG') on conflict do nothing;
 insert into public.tenant_elections values
   ('a1a1a1a1-0000-4000-8000-000000000001', '2027a000-0000-4000-8000-000000000001', 'live'),

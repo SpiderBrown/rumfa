@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { FormsModule } from '@angular/forms';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { CALLBACK_REASONS, INCIDENT_CATEGORIES } from '@alawa/shared';
+import { CALLBACK_REASONS, INCIDENT_CATEGORIES } from '@rumfa/shared';
 import { Supa } from '../core/supabase';
 import { AgoPipe, Ui, label } from '../core/ui';
 

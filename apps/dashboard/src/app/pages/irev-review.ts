@@ -4,7 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { checkResult } from '@alawa/shared';
+import { checkResult } from '@rumfa/shared';
 import { Supa } from '../core/supabase';
 import { Ui } from '../core/ui';
 

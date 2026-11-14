@@ -1,7 +1,7 @@
 {
-  "name": "alawa-platform",
+  "name": "rumfa",
   "private": true,
-  "description": "ALAWA platform: election-day situation room, results verification, voice outreach",
+  "description": "Rumfa: election-day situation room, results verification, voice outreach",
   "scripts": {
     "test": "npm run test:shared && npm run test:worker && npm run test:db",
     "test:shared": "cd shared && node --test test/index.test.ts",

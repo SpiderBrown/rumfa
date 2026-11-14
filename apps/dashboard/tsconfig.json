@@ -14,7 +14,7 @@
     "target": "ES2022",
     "module": "preserve",
     "strict": true,
-    "paths": { "@alawa/shared": ["../../shared/src/index.ts"] }
+    "paths": { "@rumfa/shared": ["../../shared/src/index.ts"] }
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,

@@ -24,7 +24,7 @@ export const LANGUAGES = [{ code: 'en', name: 'English' }, { code: 'ha', name: '
 
 @Injectable({ providedIn: 'root' })
 export class I18n {
-  readonly lang = signal<string>(localStorage.getItem('alawa.lang') ?? 'en');
-  set(code: string) { this.lang.set(code); localStorage.setItem('alawa.lang', code); }
+  readonly lang = signal<string>(localStorage.getItem('rumfa.lang') ?? 'en');
+  set(code: string) { this.lang.set(code); localStorage.setItem('rumfa.lang', code); }
   t = (s: string): string => DICT[this.lang()]?.[s] ?? s;
 }

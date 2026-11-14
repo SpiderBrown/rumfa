@@ -1,5 +1,5 @@
 # Supabase project settings used by `supabase start` / `supabase deploy`.
-project_id = "alawa"
+project_id = "rumfa"
 
 [api]
 schemas = ["public"]

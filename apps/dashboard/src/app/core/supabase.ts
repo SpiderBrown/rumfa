@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 
 declare global {
-  interface Window { ALAWA_CONFIG: { supabaseUrl: string; supabaseAnonKey: string; atWebrtcScript?: string } }
+  interface Window { RUMFA_CONFIG: { supabaseUrl: string; supabaseAnonKey: string; atWebrtcScript?: string; brand?: string } }
 }
 
 export interface Me {
@@ -14,10 +14,12 @@ export const ROOM_ROLES = ['operator', 'supervisor', 'analyst', 'legal', 'securi
 
 @Injectable({ providedIn: 'root' })
 export class Supa {
-  readonly client: SupabaseClient = createClient(window.ALAWA_CONFIG.supabaseUrl, window.ALAWA_CONFIG.supabaseAnonKey);
+  readonly client: SupabaseClient = createClient(window.RUMFA_CONFIG.supabaseUrl, window.RUMFA_CONFIG.supabaseAnonKey);
   readonly session = signal<Session | null>(null);
   readonly me = signal<Me | null>(null);
   readonly ready = signal(false);
+  /** Client short name once signed in, else the deployment's brand. */
+  readonly brand = signal<string>(window.RUMFA_CONFIG.brand ?? 'Rumfa');
   readonly liveElectionId = signal<string | null>(null);
   readonly baselineElectionId = signal<string | null>(null);
 
@@ -42,6 +44,11 @@ export class Supa {
     const { data } = await this.client.from('volunteers')
       .select('id, tenant_id, full_name, phone, role, level, area_code, languages').eq('user_id', uid).maybeSingle();
     this.me.set(data as Me | null);
+    if (data) {
+      const { data: t } = await this.client.from('tenants').select('name, settings').eq('id', data.tenant_id).maybeSingle();
+      const b = (t?.settings as any)?.brand || t?.name;
+      if (b) { this.brand.set(b); document.title = `${b} · Rumfa Room`; }
+    }
     const { data: te } = await this.client.from('tenant_elections').select('election_id, purpose');
     this.liveElectionId.set(te?.find((x) => x.purpose === 'live')?.election_id ?? null);
     this.baselineElectionId.set(te?.find((x) => x.purpose === 'baseline')?.election_id ?? null);

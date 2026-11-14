@@ -1,7 +1,7 @@
 import { Component, OnDestroy, inject, signal } from '@angular/core';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonTitle, IonToolbar } from '@ionic/angular';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { CALLBACK_REASONS } from '@alawa/shared';
+import { CALLBACK_REASONS } from '@rumfa/shared';
 import { Supa } from '../core/supa';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';

@@ -1,5 +1,5 @@
 {
-  "name": "@alawa/shared",
+  "name": "@rumfa/shared",
   "private": true,
   "type": "module",
   "scripts": { "test": "node --test test/index.test.ts" }

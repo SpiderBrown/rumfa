@@ -12,7 +12,7 @@ import { Ui } from '../core/ui';
   imports: [FormsModule, IonButton, IonContent, IonInput, IonItem, IonList],
   template: `
   <ion-content class="ion-padding">
-    <h1>ALAWA</h1>
+    <h1>{{ supa.brand() }}</h1>
     <p>{{ supa.me()?.full_name }}</p>
     <h2>{{ t('Enter your PIN') }}</h2>
     <ion-list><ion-item><ion-input type="password" inputmode="numeric" maxlength="4" [(ngModel)]="pin" (ionInput)="maybe()" aria-label="PIN" /></ion-item></ion-list>

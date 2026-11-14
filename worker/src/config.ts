@@ -16,7 +16,7 @@ export const config = {
     baseUrl: opt('IREV_BASE_URL', 'https://dolphin-app-sleqh.ondigitalocean.app/api/v1'),
     requestsPerSecond: num('IREV_RPS', 1.5),
     downloadsPerSecond: num('IREV_DOWNLOAD_RPS', 5),
-    userAgent: opt('IREV_USER_AGENT', 'ALAWA-situation-room/1.0'),
+    userAgent: opt('IREV_USER_AGENT', 'Rumfa-situation-room/1.0'),
     maxImageWidth: num('IREV_MAX_WIDTH', 1024),
   },
 

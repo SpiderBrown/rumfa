@@ -91,4 +91,6 @@ test('real IReV sheets: duplicate uploads detected, different sheets kept apart'
 test('Lagos time and templates', () => {
   assert.equal(lagosMinutes(new Date('2027-01-16T07:30:00Z')), 8 * 60 + 30);
   assert.match(render('callback_request_sms', { name: 'Musa', phone: '+2348031234567', reason: 'unit' }).body, /Musa .*problem at the unit/);
+  assert.match(render('raw', { text: 'hello' }, 'ALAWA').body, /^ALAWA: hello$/);
+  assert.match(render('raw', { text: 'hello' }).body, /^Rumfa: hello$/);
 });

@@ -10,7 +10,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { db, log, must } from '../db.ts';
 
 const STATE_PAGE = 'https://inecnigeria.org/about/state-offices';
-const UA = { 'User-Agent': 'ALAWA-contacts-import/1.0' };
+const UA = { 'User-Agent': 'Rumfa-contacts-import/1.0' };
 const args = process.argv.slice(2);
 const stateFilter = (() => { const i = args.indexOf('--states'); return i >= 0 ? args[i + 1].split(',') : null; })();
 

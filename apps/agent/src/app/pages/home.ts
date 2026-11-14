@@ -64,7 +64,7 @@ export default class HomePage {
   t = inject(I18n).t;
   me = this.supa.me;
   atUnit = this.supa.atUnit;
-  checkedIn = signal(!!localStorage.getItem('alawa.checkin.' + new Date().toDateString()));
+  checkedIn = signal(!!localStorage.getItem('rumfa.checkin.' + new Date().toDateString()));
   private tick = signal(0);
 
   constructor() { setInterval(() => this.tick.update((x) => x + 1), 30_000); }
@@ -86,7 +86,7 @@ export default class HomePage {
       pos = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
     } catch { /* location is optional */ }
     await this.outbox.add('checkin', { pu: this.me()!.area_code, ...pos }, 'Check in');
-    localStorage.setItem('alawa.checkin.' + new Date().toDateString(), '1');
+    localStorage.setItem('rumfa.checkin.' + new Date().toDateString(), '1');
     this.checkedIn.set(true);
     await this.ui.toast('Checked in');
   }

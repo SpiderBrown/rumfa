@@ -33,6 +33,6 @@ export default class HelpPage {
   private router = inject(Router);
   t = this.i18n.t;
   langs = LANGUAGES;
-  helpline = window.ALAWA_CONFIG.helpline;
+  helpline = window.RUMFA_CONFIG.helpline;
   async signOut() { await this.supa.signOut(); await this.router.navigateByUrl('/login'); }
 }

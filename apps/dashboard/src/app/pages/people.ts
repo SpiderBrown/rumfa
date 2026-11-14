@@ -7,7 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { normaliseNgPhone, normalisePuCode } from '@alawa/shared';
+import { normaliseNgPhone, normalisePuCode } from '@rumfa/shared';
 import { Supa } from '../core/supabase';
 import { Calls } from '../core/calls';
 import { Ui, label } from '../core/ui';

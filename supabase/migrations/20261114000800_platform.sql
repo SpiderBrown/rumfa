@@ -41,8 +41,8 @@ end $$;
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
-    perform cron.schedule('alawa-tick-cases', '* * * * *', 'select app.tick_cases()');
-    perform cron.schedule('alawa-tick-callbacks', '* * * * *', 'select app.tick_callbacks()');
-    perform cron.schedule('alawa-stale-contacts', '0 6 * * *', 'select app.mark_stale_contacts(7)');
+    perform cron.schedule('rumfa-tick-cases', '* * * * *', 'select app.tick_cases()');
+    perform cron.schedule('rumfa-tick-callbacks', '* * * * *', 'select app.tick_callbacks()');
+    perform cron.schedule('rumfa-stale-contacts', '0 6 * * *', 'select app.mark_stale_contacts(7)');
   end if;
 end $$;

@@ -66,14 +66,14 @@ export default class ChecklistPage {
   private router = inject(Router);
   t = inject(I18n).t;
   groups = [...new Set(ITEMS.map((i) => i.group))];
-  answers = signal<Record<string, any>>(JSON.parse(localStorage.getItem('alawa.checklist') ?? '{}'));
+  answers = signal<Record<string, any>>(JSON.parse(localStorage.getItem('rumfa.checklist') ?? '{}'));
   itemsOf = (g: string) => ITEMS.filter((i) => i.group === g);
 
   async answer(i: Item, value: any) {
     if (value === undefined || value === null || value === '') return;
     const a = { ...this.answers(), [i.code]: value };
     this.answers.set(a);
-    localStorage.setItem('alawa.checklist', JSON.stringify(a));
+    localStorage.setItem('rumfa.checklist', JSON.stringify(a));
     await this.outbox.add('checklist', { pu: this.supa.me()!.area_code, item: i.code, answer: { value } }, `Checklist: ${i.text}`);
     if (value === 'no' && i.problem && await this.ui.confirm('Report this problem?', 'The situation room will be told straight away.', 'Report')) {
       await this.router.navigate(['/report']);

@@ -17,7 +17,7 @@ export class Calls {
 
   private async loadClient(): Promise<any> {
     if (this.client) return this.client;
-    const src = window.ALAWA_CONFIG.atWebrtcScript;
+    const src = window.RUMFA_CONFIG.atWebrtcScript;
     if (!src) return null;
     await new Promise<void>((res, rej) => {
       const s = document.createElement('script'); s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error('Could not load call client'));

@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 
 declare global {
-  interface Window { ALAWA_CONFIG: { supabaseUrl: string; supabaseAnonKey: string; smsNumber: string; helpline?: string } }
+  interface Window { RUMFA_CONFIG: { supabaseUrl: string; supabaseAnonKey: string; smsNumber: string; helpline?: string; brand?: string } }
 }
 
 export interface Me {
@@ -12,12 +12,14 @@ export interface Me {
 
 @Injectable({ providedIn: 'root' })
 export class Supa {
-  readonly client: SupabaseClient = createClient(window.ALAWA_CONFIG.supabaseUrl, window.ALAWA_CONFIG.supabaseAnonKey, {
+  readonly client: SupabaseClient = createClient(window.RUMFA_CONFIG.supabaseUrl, window.RUMFA_CONFIG.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true },
   });
   readonly session = signal<Session | null>(null);
   readonly me = signal<Me | null>(this.cachedMe());
-  readonly parties = signal<string[]>(JSON.parse(localStorage.getItem('alawa.parties') ?? '[]'));
+  readonly parties = signal<string[]>(JSON.parse(localStorage.getItem('rumfa.parties') ?? '[]'));
+  /** Name shown in the app: the client's short name once signed in, else the deployment's brand. */
+  readonly brand = signal<string>(localStorage.getItem('rumfa.brand') ?? window.RUMFA_CONFIG.brand ?? 'Rumfa');
   readonly isAgent = computed(() => this.me()?.role === 'agent');
   readonly isCoordinator = computed(() => this.me()?.role === 'coordinator');
   readonly atUnit = computed(() => this.me()?.level === 'pu');
@@ -29,7 +31,7 @@ export class Supa {
     if (data.session) await this.refreshMe().catch(() => { /* offline: keep cached profile */ });
   }
 
-  private cachedMe(): Me | null { try { return JSON.parse(localStorage.getItem('alawa.me') ?? 'null'); } catch { return null; } }
+  private cachedMe(): Me | null { try { return JSON.parse(localStorage.getItem('rumfa.me') ?? 'null'); } catch { return null; } }
 
   async refreshMe(): Promise<void> {
     const uid = (await this.client.auth.getUser()).data.user?.id;
@@ -39,14 +41,19 @@ export class Supa {
       .eq('user_id', uid).maybeSingle();
     if (error) throw error;
     this.me.set(data as Me | null);
-    localStorage.setItem('alawa.me', JSON.stringify(data));
+    localStorage.setItem('rumfa.me', JSON.stringify(data));
+    if (data) {
+      const { data: t } = await this.client.from('tenants').select('name, settings').eq('id', data.tenant_id).maybeSingle();
+      const b = (t?.settings as any)?.brand || t?.name;
+      if (b) { this.brand.set(b); localStorage.setItem('rumfa.brand', b); }
+    }
     // Ballot parties of the live election (cached for offline result entry)
     const { data: te } = await this.client.from('tenant_elections').select('election_id').eq('purpose', 'live').maybeSingle();
     if (te) {
       const { data: ps } = await this.client.from('election_parties').select('party').eq('election_id', te.election_id).order('ballot_order');
       const list = (ps ?? []).map((p) => p.party);
       this.parties.set(list);
-      localStorage.setItem('alawa.parties', JSON.stringify(list));
+      localStorage.setItem('rumfa.parties', JSON.stringify(list));
     }
   }
 
@@ -64,8 +71,9 @@ export class Supa {
 
   async signOut() {
     await this.client.auth.signOut();
-    localStorage.removeItem('alawa.me');
-    localStorage.removeItem('alawa.pin');
+    localStorage.removeItem('rumfa.me');
+    localStorage.removeItem('rumfa.pin');
+    localStorage.removeItem('rumfa.brand');
     this.me.set(null);
   }
 }

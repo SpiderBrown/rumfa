@@ -1,4 +1,4 @@
--- ALAWA platform: reference data shared by all tenants (public INEC geography,
+-- Rumfa platform: reference data shared by all tenants (public INEC geography,
 -- elections, parties, incident categories).
 
 create schema if not exists app;

@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonNote,
   IonProgressBar, IonTitle, IonToolbar } from '@ionic/angular';
-import { checkResult, type ResultFigures } from '@alawa/shared';
+import { checkResult, type ResultFigures } from '@rumfa/shared';
 import { Supa } from '../core/supa';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
@@ -108,8 +108,8 @@ export default class ResultPage {
     const f = this.figures();
     const issues = this.issues();
     if (issues.length && !(await this.ui.confirm('Figures do not add up', 'Submit exactly as written on the sheet?', 'Submit'))) return;
-    const version = Number(localStorage.getItem('alawa.result.version') ?? '0') + 1;
-    localStorage.setItem('alawa.result.version', String(version));
+    const version = Number(localStorage.getItem('rumfa.result.version') ?? '0') + 1;
+    localStorage.setItem('rumfa.result.version', String(version));
     await this.outbox.add('result', { pu: this.pu, version, registered: f.registered, accredited: f.accredited, rejected: f.rejected,
       total_valid: f.totalValid, votes: f.votes }, `Result for ${this.pu}`, this.blob);
     await this.ui.toast('Result saved. It will send now, or you can send it by SMS if there is no internet.');

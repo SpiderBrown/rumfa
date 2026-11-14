@@ -2,7 +2,7 @@ import { Component, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonList, IonTextarea, IonTitle, IonToolbar } from '@ionic/angular';
-import { INCIDENT_CATEGORIES, type IncidentCategory } from '@alawa/shared';
+import { INCIDENT_CATEGORIES, type IncidentCategory } from '@rumfa/shared';
 import { Supa } from '../core/supa';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';

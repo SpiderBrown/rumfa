@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonSelect, IonSelectOption, IonTitle, IonToolbar } from '@ionic/angular';
-import { normaliseNgPhone, normalisePuCode } from '@alawa/shared';
+import { normaliseNgPhone, normalisePuCode } from '@rumfa/shared';
 import { Supa } from '../core/supa';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';

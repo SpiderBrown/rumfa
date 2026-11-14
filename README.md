@@ -1,6 +1,16 @@
-# ALAWA platform
+# Rumfa
 
-Election-day situation room, results verification against IReV, field agent app, and voice outreach.
+Election-day situation room, results verification against IReV, field agent app, and voice outreach, run as a multi-client service.
+*Rumfa* is Hausa for the polling booth (*rumfar zaɓe*, the polling unit), the level the whole system works at.
+
+| Name | What |
+|---|---|
+| **Rumfa** | The platform |
+| **Rumfa Agent** | Mobile app for polling agents, volunteers and coordinators (`ng.rumfa.agent`) |
+| **Rumfa Room** | Situation-room dashboard |
+
+Each client (tenant) has its own short name in `tenants.settings.brand`, for example `ALAWA`. That name is shown in the apps after sign-in and starts every SMS, so a client's people see their own organisation, not the platform.
+
 Design: *ALAWA Platform: Software Design Document* (Claude Docs). This repository implements it.
 
 ## Layout
@@ -59,7 +69,7 @@ npm run build:sample -- --tenant <id> --election <id> --size 1500
 npm start                                             # the worker itself
 ```
 
-The first tenant, its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `supabase/seed.sql` shows the shape (it is development data, do not run it in production).
+The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `supabase/seed.sql` shows the shape (it is development data, do not run it in production).
 
 ## Run the apps
 

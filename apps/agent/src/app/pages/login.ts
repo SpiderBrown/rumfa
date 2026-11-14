@@ -2,7 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonButton, IonContent, IonHeader, IonInput, IonItem, IonLabel, IonList, IonSegment, IonSegmentButton, IonTitle, IonToolbar } from '@ionic/angular';
-import { normaliseNgPhone } from '@alawa/shared';
+import { normaliseNgPhone } from '@rumfa/shared';
 import { Supa } from '../core/supa';
 import { Pin } from '../core/pin';
 import { I18n, LANGUAGES } from '../core/i18n';
@@ -13,7 +13,7 @@ import { Ui } from '../core/ui';
   selector: 'page-login',
   imports: [FormsModule, IonButton, IonContent, IonHeader, IonInput, IonItem, IonLabel, IonList, IonSegment, IonSegmentButton, IonTitle, IonToolbar],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-title>ALAWA</ion-title></ion-toolbar></ion-header>
+  <ion-header><ion-toolbar color="primary"><ion-title>{{ supa.brand() }}</ion-title></ion-toolbar></ion-header>
   <ion-content class="ion-padding">
     <ion-segment [value]="i18n.lang()" (ionChange)="i18n.set($any($event.detail.value))">
       @for (l of langs; track l.code) { <ion-segment-button [value]="l.code"><ion-label>{{ l.name }}</ion-label></ion-segment-button> }
@@ -44,7 +44,7 @@ import { Ui } from '../core/ui';
   styles: `h2 { margin-top: 28px; }`,
 })
 export default class LoginPage {
-  private supa = inject(Supa);
+  supa = inject(Supa);
   private pin = inject(Pin);
   private router = inject(Router);
   private ui = inject(Ui);

@@ -35,7 +35,10 @@ Deno.serve(handler(async (req) => {
     msg = decodeSms(text);
   } catch (e) {
     const reason = e instanceof SmsDecodeError ? e.message : 'Unreadable';
-    return finish({ error: reason }, 'ALAWA: message not accepted. Please resend from the app.');
+    // Registered senders get a reply (branded with their client's name); strangers get none
+    const { data: known } = await db.from('volunteers').select('tenant_id').eq('phone', from).eq('status', 'active').limit(1).maybeSingle();
+    if (!known) return finish({ error: reason });
+    return finish({ error: reason, tenant_id: known.tenant_id }, 'Message not accepted. Please resend from the app.');
   }
 
   const { data: v } = await db.from('volunteers')
@@ -52,7 +55,7 @@ Deno.serve(handler(async (req) => {
         p_rejected: msg.rejected, p_total_valid: msg.totalValid, p_votes: msg.votes, p_source: 'sms', p_client_id: null,
       });
       if (error) throw error;
-      return finish(base, `ALAWA: result for ${msg.puCode} received (ref ${String(data.submission_id).slice(0, 8)}).`);
+      return finish(base, `Result for ${msg.puCode} received (ref ${String(data.submission_id).slice(0, 8)}).`);
     }
     if (msg.kind === 'incident') {
       const { error } = await db.rpc('svc_ingest_incident', {
@@ -60,12 +63,12 @@ Deno.serve(handler(async (req) => {
         p_description: 'Sent by SMS', p_source: 'sms', p_client_id: null,
       });
       if (error) throw error;
-      return finish(base, `ALAWA: report for ${msg.puCode} received. The situation room will call you.`);
+      return finish(base, `Report for ${msg.puCode} received. The situation room will call you.`);
     }
     const { error } = await db.rpc('svc_ingest_callback', { p_volunteer: v.id, p_reason: msg.reason, p_channel: 'sms' });
     if (error) throw error;
-    return finish(base, 'ALAWA: your coordinator will call you shortly.');
+    return finish(base, 'Your coordinator will call you shortly.');
   } catch (e) {
-    return finish({ ...base, error: (e as Error).message ?? String(e) }, 'ALAWA: message could not be processed. Please call your coordinator.');
+    return finish({ ...base, error: (e as Error).message ?? String(e) }, 'Message could not be processed. Please call your coordinator.');
   }
 }));

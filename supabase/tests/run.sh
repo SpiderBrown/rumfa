@@ -3,7 +3,7 @@
 # Postgres database (no Supabase needed). Usage: supabase/tests/run.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DB=${TEST_DB:-alawa_test}
+DB=${TEST_DB:-rumfa_test}
 dropdb --if-exists "$DB" >/dev/null
 createdb "$DB"
 P="psql -X -q -v ON_ERROR_STOP=1 -d $DB"

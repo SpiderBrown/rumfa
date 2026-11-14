@@ -5,7 +5,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
-import { normaliseNgPhone } from '@alawa/shared';
+import { normaliseNgPhone } from '@rumfa/shared';
 import { Supa } from '../core/supabase';
 import { Ui } from '../core/ui';
 
@@ -15,7 +15,7 @@ import { Ui } from '../core/ui';
   template: `
   <div class="wrap">
     <mat-card class="card" appearance="outlined">
-      <mat-card-header><mat-card-title>ALAWA situation room</mat-card-title>
+      <mat-card-header><mat-card-title>{{ supa.brand() }} situation room</mat-card-title>
         <mat-card-subtitle>Sign in with your registered phone number</mat-card-subtitle></mat-card-header>
       <mat-card-content>
         @if (step() === 'phone') {
@@ -36,7 +36,7 @@ import { Ui } from '../core/ui';
            .card { width: min(420px, 92vw); padding: 8px; } mat-card-content { padding-top: 16px; }`,
 })
 export class LoginPage {
-  private supa = inject(Supa);
+  supa = inject(Supa);
   private ui = inject(Ui);
   private router = inject(Router);
   step = signal<'phone' | 'code'>('phone');

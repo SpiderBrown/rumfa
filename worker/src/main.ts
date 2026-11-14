@@ -1,4 +1,4 @@
-// ALAWA worker: runs alongside Supabase.
+// Rumfa worker: runs alongside Supabase.
 //  - every TICK_SECONDS: case/callback timers, notifications, top-ups, agent-photo OCR
 //  - every minute: voice outreach dialer
 //  - every 10 minutes: trend check

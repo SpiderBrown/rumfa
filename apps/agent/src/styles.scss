@@ -1,0 +1,27 @@
+@import '@ionic/angular/css/core.css';
+@import '@ionic/angular/css/normalize.css';
+@import '@ionic/angular/css/structure.css';
+@import '@ionic/angular/css/typography.css';
+@import '@ionic/angular/css/padding.css';
+@import '@ionic/angular/css/flex-utils.css';
+@import '@ionic/angular/css/display.css';
+
+// Large, high-contrast UI for agents who are not used to apps.
+:root {
+  --ion-color-primary: #0b6b3a;
+  --ion-color-primary-rgb: 11, 107, 58;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-shade: #095e33;
+  --ion-color-primary-tint: #237a4e;
+  --ion-font-family: system-ui, Roboto, sans-serif;
+  font-size: 17px;
+}
+ion-button { --border-radius: 12px; min-height: 52px; font-size: 1.05rem; text-transform: none; }
+.big-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+.tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 108px;
+  border-radius: 16px; background: var(--ion-color-light); font-weight: 600; text-align: center; padding: 10px; color: var(--ion-text-color); }
+.tile ion-icon { font-size: 34px; color: var(--ion-color-primary); }
+.tile.sos { background: #b3261e; color: white; } .tile.sos ion-icon { color: white; }
+.tile.done ion-icon { color: #0b6b3a; }
+.hint { color: var(--ion-color-medium); font-size: 0.9rem; }
+.num input { font-size: 1.4rem !important; text-align: right; }

@@ -1,0 +1,6 @@
+{
+  "name": "@alawa/shared",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/index.test.ts" }
+}

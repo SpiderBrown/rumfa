@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "dashboard-dist", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "4300", "-d", "apps/dashboard/dist/dashboard/browser"], "port": 4300 },
+    { "name": "agent-dist", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "4301", "-d", "apps/agent/dist/agent/browser"], "port": 4301 }
+  ]
+}

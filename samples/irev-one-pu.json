@@ -1,0 +1,19 @@
+{
+  "pu_code": "19/28/02/003",
+  "name": "AGALAWA I",
+  "state_id": 20,
+  "lga": "MADOBI",
+  "ward": "CINKOSO",
+  "is_accredited": 1,
+  "document": {
+    "external": false,
+    "status": 1,
+    "is_supplement": false,
+    "_id": "63fe73a15e25666708795d10",
+    "url": "https://inc-s3-cache.incportals.com/cached/results/61934/result_126069_1677486674_thumb.jpg",
+    "size": 1000,
+    "updated_at": "2023-02-28T21:35:29.123Z"
+  },
+  "old_documents": [],
+  "updated_at": "2023-02-28T21:35:29.124Z"
+}

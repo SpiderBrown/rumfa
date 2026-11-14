@@ -1,0 +1,28 @@
+{
+  "name": "@alawa/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "import:geography": "node src/scripts/import-geography.ts",
+    "import:inec-contacts": "node src/scripts/import-inec-contacts.ts",
+    "import:liaison": "node src/scripts/import-liaison-contacts.ts",
+    "import:people": "node src/scripts/import-people.ts",
+    "build:sample": "node src/scripts/build-sample.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "pdfjs-dist": "^4.10.38",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3"
+  }
+}

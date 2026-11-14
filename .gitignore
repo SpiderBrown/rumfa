@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.angular/
+.env
+*.env.local
+supabase/.temp/
+supabase/functions/.env
+apps/agent/android/
+apps/agent/ios/
+.DS_Store

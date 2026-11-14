@@ -1,0 +1,12 @@
+{
+  "name": "alawa-ground-game",
+  "version": "0.1.0",
+  "description": "ALAWA volunteer, PVC and get-out-the-vote coordination app",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  }
+}

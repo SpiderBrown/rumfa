@@ -1,0 +1,101 @@
+import { Component, computed, inject, signal } from '@angular/core';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { MatToolbarModule } from '@angular/material/toolbar';
+import { MatListModule } from '@angular/material/list';
+import { MatIconModule } from '@angular/material/icon';
+import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { Supa } from './core/supabase';
+import { Calls } from './core/calls';
+import { Ui, label } from './core/ui';
+
+interface NavItem { path: string; icon: string; text: string; roles?: string[] }
+
+const NAV: NavItem[] = [
+  { path: '/room', icon: 'support_agent', text: 'Situation room' },
+  { path: '/callbacks', icon: 'phone_callback', text: 'Callback requests' },
+  { path: '/results', icon: 'how_to_vote', text: 'Live results', roles: ['analyst', 'supervisor', 'admin', 'legal', 'operator'] },
+  { path: '/irev', icon: 'cloud_download', text: 'IReV data', roles: ['analyst', 'supervisor', 'admin'] },
+  { path: '/irev/review', icon: 'fact_check', text: 'Sheet review', roles: ['analyst', 'supervisor', 'admin', 'legal'] },
+  { path: '/contacts', icon: 'contact_phone', text: 'Authority contacts' },
+  { path: '/people', icon: 'groups', text: 'People' },
+  { path: '/shifts', icon: 'schedule', text: 'Shifts and queues', roles: ['supervisor', 'admin'] },
+  { path: '/topups', icon: 'sim_card', text: 'Airtime and data', roles: ['admin'] },
+  { path: '/voice', icon: 'campaign', text: 'Voice outreach', roles: ['voice_ops', 'admin'] },
+];
+
+@Component({
+  selector: 'app-shell',
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, MatSidenavModule, MatToolbarModule, MatListModule, MatIconModule,
+    MatButtonModule, MatButtonToggleModule, MatTooltipModule],
+  template: `
+  <mat-sidenav-container class="shell">
+    <mat-sidenav mode="side" opened class="nav">
+      <div class="brand"><mat-icon>shield</mat-icon><span>ALAWA</span></div>
+      <mat-nav-list>
+        @for (n of nav(); track n.path) {
+          <a mat-list-item [routerLink]="n.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: n.path === '/irev' }">
+            <mat-icon matListItemIcon>{{ n.icon }}</mat-icon><span matListItemTitle>{{ n.text }}</span>
+          </a>
+        }
+      </mat-nav-list>
+    </mat-sidenav>
+    <mat-sidenav-content>
+      <mat-toolbar class="top">
+        <span class="who">{{ supa.me()?.full_name }} · {{ label(supa.me()?.role) }} · {{ supa.me()?.area_code }}</span>
+        <span class="spacer"></span>
+        @if (calls.active(); as c) {
+          <span class="oncall"><mat-icon>call</mat-icon> On call with {{ c.label }} ({{ c.via === 'browser' ? 'headset' : 'your phone' }})</span>
+          <button mat-stroked-button (click)="calls.hangup()">Hang up</button>
+        }
+        @if (supa.isRoom()) {
+          <mat-button-toggle-group [value]="status()" (change)="setStatus($event.value)" hideSingleSelectionIndicator>
+            <mat-button-toggle value="available">Available</mat-button-toggle>
+            <mat-button-toggle value="away">Away</mat-button-toggle>
+            <mat-button-toggle value="offline">Offline</mat-button-toggle>
+          </mat-button-toggle-group>
+        }
+        <button mat-icon-button matTooltip="Sign out" (click)="signOut()"><mat-icon>logout</mat-icon></button>
+      </mat-toolbar>
+      <main class="content"><router-outlet /></main>
+    </mat-sidenav-content>
+  </mat-sidenav-container>`,
+  styles: `
+    .shell { height: 100vh; }
+    .nav { width: 232px; border-right: 1px solid var(--mat-sys-outline-variant); }
+    .brand { display: flex; gap: 8px; align-items: center; padding: 16px; font: var(--mat-sys-title-large); color: var(--mat-sys-primary); }
+    .active { background: var(--mat-sys-secondary-container); }
+    .top { position: sticky; top: 0; z-index: 2; gap: 12px; background: var(--mat-sys-surface-container); font: var(--mat-sys-body-medium); }
+    .who { color: var(--mat-sys-on-surface-variant); }
+    .spacer { flex: 1; }
+    .oncall { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-primary); }
+    .content { padding: 20px 24px; }
+  `,
+})
+export class Shell {
+  supa = inject(Supa);
+  calls = inject(Calls);
+  private ui = inject(Ui);
+  private router = inject(Router);
+  label = label;
+  status = signal('offline');
+  nav = computed(() => NAV.filter((n) => !n.roles || n.roles.includes(this.supa.me()?.role ?? '')));
+
+  constructor() {
+    void this.supa.client.from('staff_status').select('status').eq('volunteer_id', this.supa.me()?.id ?? '').maybeSingle()
+      .then(({ data }) => data && this.status.set(data.status));
+  }
+
+  async setStatus(s: string) {
+    await this.ui.run(() => this.supa.rpc('set_my_status', { p_status: s }));
+    this.status.set(s);
+  }
+
+  async signOut() {
+    if (this.supa.isRoom()) await this.supa.rpc('set_my_status', { p_status: 'offline' }).catch(() => {});
+    await this.supa.client.auth.signOut();
+    await this.router.navigateByUrl('/login');
+  }
+}

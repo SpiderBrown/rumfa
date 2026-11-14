@@ -11,9 +11,31 @@ Election-day situation room, results verification against IReV, field agent app,
 
 Each client (tenant) has its own short name in `tenants.settings.brand`, for example `ALAWA`. That name is shown in the apps after sign-in and starts every SMS, so a client's people see their own organisation, not the platform.
 
-Design: *ALAWA Platform: Software Design Document* (Claude Docs). This repository implements it.
+Design: *Rumfa Platform: Software Design Document* (Claude Docs). Sections 9 and 16 describe the backend.
 
-## Layout
+## Architecture (target)
+
+The backend is being moved to a **NestJS API in front of everything**. This repository still holds the earlier Supabase-first version (described under Layout below) until that migration is done.
+
+- **One NestJS API for every client.** Apps never talk to Supabase. The API handles sign-in, access control (tenant, role, area), validation, rate limits, the audit log, live updates (Socket.IO) and provider webhooks.
+- **Supabase as the database host only**, as in the dares-pue backend: NestJS (TypeORM) connects through the Session pooler `DATABASE_URL`. Supabase's Data API, Auth, Realtime and Edge Functions are not used, and the Data API is locked (row-level security with no policies for `anon`/`authenticated`, `public` removed from exposed schemas). Supabase Storage stays as a private bucket that only the API uses, through signed links.
+- **Tenant isolation:** the tenant comes from the sign-in token. NestJS filters every query by it, and Postgres repeats the check as a backstop (`rumfa_api` role without bypass, `app.tenant_id` set per transaction, one tenant policy per table).
+- **Sign-in:** field users activate each phone once (SMS code, WhatsApp code or coordinator activation code, chosen per client), then use phone + PIN. Dashboard staff use email + password, with an authenticator code for supervisors and admins. `OTP_MODE=console|fixed` for development.
+- **People in several clients:** one `Identity` per phone, one `Membership` per client; the app asks which client to work for, and every token carries one tenant only.
+- **Per-client dashboards:** the same Angular build on each client's domain with its own config (API address, tenant, brand). One Rumfa Agent app serves all clients.
+- **Worker:** a second NestJS entry point running pg-boss queues in the same Postgres (IReV, OCR, notifications, top-ups, dialer, escalation timers). No Redis.
+
+| Today | Becomes |
+|---|---|
+| `supabase/migrations/` SQL rules and RLS | TypeORM migrations; rules move into NestJS services (race-sensitive steps stay as SQL inside them); RLS reduced to the tenant backstop |
+| `supabase/functions/` Edge Functions | NestJS controllers (`/auth`, `/calls`, `/live-view`, `/media`, `/webhooks/...`) |
+| `worker/` | NestJS worker (pg-boss) |
+| Supabase Auth phone OTP | NestJS auth (activation + PIN, staff password + authenticator) |
+| Supabase Realtime | NestJS Socket.IO gateway with Postgres `NOTIFY` |
+| `supabase/tests/` scenarios | Jest tests against a test database, plus a cross-tenant test suite |
+| `apps/*` Supabase client | Generated OpenAPI client + Socket.IO |
+
+## Layout (current code, Supabase-first)
 
 | Folder | What it is |
 |---|---|

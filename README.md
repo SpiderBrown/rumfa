@@ -54,13 +54,25 @@ The backend is being moved to a **NestJS API in front of everything**. This repo
 - A Supabase project (Postgres 15+). For local development, the Supabase CLI with Docker.
 - Accounts: Africa's Talking (SMS sender ID, short code or long number, voice number), Firebase (push), LiveKit or Agora (live view), VTpass (top-ups), WhatsApp Business (notifications), an OCR provider (Google Vision or Azure Document Intelligence).
 
+## Run the API (NestJS)
+
+```bash
+cd apps/api
+cp .env.example .env      # local Postgres, or DATABASE_URL = Supabase Session pooler
+npm install
+npm run start:dev         # applies db/migrations on start; docs at http://localhost:3000/api/docs
+```
+
+For local sign-in without SMS set `OTP_MODE=console` (codes appear in the log) or `OTP_MODE=fixed`.
+The first admin gets an invite created with SQL or the `inviteStaff` service; after that, admins invite staff and coordinators issue activation codes from the API.
+
 ## Run the tests
 
 ```bash
 npm test
 ```
 
-This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`) and the database scenario tests (`db/tests/run.sh`, which needs a local Postgres with `createdb`).
+This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`), the database scenario tests (`db/tests/run.sh`) and the API end-to-end tests (`apps/api`, a fresh `rumfa_e2e` database per run). The last two need a local Postgres with `createdb`.
 
 ## Set up a Supabase project
 

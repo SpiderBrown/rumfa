@@ -21,6 +21,7 @@ export interface OutItem {
   smsSentAt?: number;
   label: string;              // shown in the "Waiting to send" list
   tenantId?: string;          // the organisation it was made for (people may work for several)
+  memberId?: string;          // who made it: the person's membership in that organisation
   agentCode?: string | null;  // that organisation's agent code, used in the SMS fallback
 }
 
@@ -48,7 +49,13 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 @Injectable({ providedIn: 'root' })
 export class Outbox {
   private api = inject(Api);
-  readonly items = signal<OutItem[]>([]);
+  /** Everything stored on this phone, for every person and organisation that has signed in here. */
+  private readonly all = signal<OutItem[]>([]);
+  /** Only the signed-in person's items, for the organisation they are signed in to now. Others stay stored until that person signs back in. */
+  readonly items = computed(() => {
+    const me = this.api.me();
+    return me ? this.all().filter((i) => i.memberId === me.id && i.tenantId === me.tenant_id) : [];
+  });
   readonly online = signal(true);
   readonly pending = computed(() => this.items().filter((i) => i.status !== 'sent'));
   private syncing = false;
@@ -66,7 +73,7 @@ export class Outbox {
     const all = (await tx<OutItem[]>('readonly', (s) => s.getAll() as IDBRequest<OutItem[]>)) ?? [];
     // keep sent items for 24 h so people can see what went
     const keep = all.filter((i) => i.status !== 'sent' || Date.now() - i.createdAt < 86400_000);
-    this.items.set(keep.sort((a, b) => b.createdAt - a.createdAt));
+    this.all.set(keep.sort((a, b) => b.createdAt - a.createdAt));
   }
 
   private async put(i: OutItem) { await tx('readwrite', (s) => s.put(i)); await this.reload(); }
@@ -74,7 +81,7 @@ export class Outbox {
   async add(kind: ItemKind, payload: Record<string, any>, label: string, photo?: Blob | null): Promise<OutItem> {
     const me = this.api.me();
     const item: OutItem = { id: crypto.randomUUID(), kind, payload, photo: photo ?? null, createdAt: Date.now(), status: 'waiting', label,
-      tenantId: me?.tenant_id, agentCode: me?.agent_code ?? null };
+      tenantId: me?.tenant_id, memberId: me?.id, agentCode: me?.agent_code ?? null };
     await this.put(item);
     void this.sync();
     return item;
@@ -111,19 +118,15 @@ export class Outbox {
     await this.put(i);
   }
 
-  /** Items waiting for the organisation the person is signed in to now. */
-  waitingHere() {
-    const tid = this.api.me()?.tenant_id;
-    return this.pending().filter((i) => !i.tenantId || i.tenantId === tid);
-  }
+  /** Items the signed-in person still has to send for this organisation. */
+  waitingHere() { return this.pending(); }
 
   async sync() {
-    const tid = this.api.me()?.tenant_id;
-    if (this.syncing || !this.api.session() || !tid) return;
+    if (this.syncing || !this.api.session() || !this.api.me()) return;
     this.syncing = true;
     try {
-      // Only items made for the organisation signed in now; others wait until the person switches back
-      for (const i of this.items().filter((x) => (x.status === 'waiting' || x.status === 'sending') && (!x.tenantId || x.tenantId === tid)).reverse()) {
+      // Only the signed-in person's items for this organisation; other people's wait until they sign in again
+      for (const i of this.items().filter((x) => x.status === 'waiting' || x.status === 'sending').reverse()) {
         try {
           i.status = 'sending'; await this.put(i);
           await this.send(i);

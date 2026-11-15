@@ -47,6 +47,19 @@ export class StorageService {
     return `${this.cfg.supabaseUrl}/storage/v1${j.signedURL ?? j.signedUrl}`;
   }
 
+  /** Server-side download (worker: OCR of stored sheets and photos). */
+  async get(bucket: Bucket, path: string): Promise<{ bytes: Buffer; contentType: string }> {
+    this.check(bucket, path);
+    if (this.cfg.driver === 'local') {
+      const bytes = await this.readLocal(bucket, path);
+      return { bytes, contentType: path.endsWith('.pdf') ? 'application/pdf' : path.endsWith('.png') ? 'image/png' : 'image/jpeg' };
+    }
+    const res = await fetch(`${this.cfg.supabaseUrl}/storage/v1/object/${bucket}/${path}`, { headers: { Authorization: `Bearer ${this.cfg.serviceKey}` } });
+    if (res.status === 404 || res.status === 400) throw new NotFoundException('File not found');
+    if (!res.ok) throw new ServiceUnavailableException(`Storage download failed (${res.status})`);
+    return { bytes: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') ?? '' };
+  }
+
   /** Server-side upload (worker, IReV sheets, imports). */
   async put(bucket: Bucket, path: string, body: Buffer, contentType: string): Promise<void> {
     this.check(bucket, path);

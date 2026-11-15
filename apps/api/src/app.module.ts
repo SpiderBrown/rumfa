@@ -2,7 +2,8 @@ import { Controller, Get, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ApiTags } from '@nestjs/swagger';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { HttpThrottlerGuard } from './auth/guards';
 import { DataSource } from 'typeorm';
 import { AuthModule } from './auth/auth.module';
 import { Public } from './auth/decorators';
@@ -10,6 +11,7 @@ import { CommonModule } from './common/common.module';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { DomainModule } from './domain/domain.module';
+import { LiveGateway } from './live/live.gateway';
 
 @ApiTags('Health')
 @Controller('health')
@@ -33,6 +35,6 @@ class HealthController {
     DomainModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }, LiveGateway],
 })
 export class AppModule {}

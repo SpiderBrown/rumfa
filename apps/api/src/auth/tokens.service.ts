@@ -42,6 +42,11 @@ export class TokensService {
     return { sub, tid, mid, role, level, area, dev };
   }
 
+  /** Expiry (seconds since epoch) of a token that has already been verified. */
+  expiryOf(token: string): number | undefined {
+    return (this.jwt.decode(token) as any)?.exp;
+  }
+
   /** Short-lived token for a step between sign-in and a session: choosing a client, or the authenticator code. */
   signStep(typ: Exclude<TokenType, 'access'>, payload: object): string {
     return this.sign(typ, payload, 300);

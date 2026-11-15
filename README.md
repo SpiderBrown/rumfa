@@ -23,6 +23,8 @@ Design: *Rumfa Platform: Software Design Document* (Claude Docs). Sections 9 and
 - **Supabase locked down:** `anon` and `authenticated` get no grants; Supabase Auth, Realtime, Edge Functions and pg_cron are not used. Storage buckets are private and reached only through short-lived links the API issues.
 - **Sign-in:** field users activate each phone once (SMS code, WhatsApp code or coordinator activation code, chosen per client), then use phone + PIN. Staff use email + password, with an authenticator code for supervisors and admins. One identity can work for several clients; each token carries one.
 - **Per-client dashboards:** the same Angular build on each client's domain with its own config; one Rumfa Agent app for all clients.
+- **Live updates:** apps connect to Socket.IO at `/live` with their access token. Database triggers announce changes on `rumfa_changes`; each API instance forwards an event (ids and status only) to the connections allowed to see it: area rooms for room staff and coordinators, the person's own room, and a case or conversation after an access check. Apps then re-read through the REST API.
+- **Worker:** the same codebase run as `node dist/worker.main`. Deadlines, notifications, top-ups, OCR, the voice dialer, trend checks and IReV jobs. Work is queued in Postgres tables (IReV jobs claimed with `SKIP LOCKED`, top-ups claimed per row) and each timer takes an advisory lock, so several workers can run safely; no extra queue system is needed.
 
 Migration status:
 
@@ -31,8 +33,8 @@ Migration status:
 | Database: identities, sign-in tables, `rumfa_api` role, lockdown | Done (`db/`) |
 | API: sign-in, people, cases, field reports, results, IReV, callbacks, contacts, messages, shifts, top-ups, voice, live view, calls, file links | Done (`apps/api`) |
 | Webhooks: SMS fallback, voice, WhatsApp, VTpass, LiveKit | Done (`/api/v1/webhooks/...`); Edge Functions removed |
-| Live updates (Socket.IO + Postgres `NOTIFY`) | Not yet |
-| Worker as a NestJS entry point with pg-boss (`worker/` still uses the Supabase client) | Not yet |
+| Live updates: Socket.IO at `/live`, fed by Postgres `NOTIFY` (works across API instances, no Redis) | Done |
+| Worker as a second NestJS entry point (`node dist/worker.main`), all jobs on SQL | Done; `worker/` removed |
 | Apps switched from the Supabase client to the API | Not yet: **the apps do not work until this is done** |
 
 ## Layout
@@ -42,8 +44,7 @@ Migration status:
 | `shared/` | Dependency-free TypeScript used everywhere: SMS fallback codec, incident categories, deadlines, result checks, phone and polling-unit code helpers (copied into the API by `scripts/sync-shared.sh`) |
 | `db/migrations/` | Postgres schema, row-level security, sign-in tables and all business rules as SQL functions |
 | `db/tests/` | Database scenario tests on plain local Postgres |
-| `apps/api/` | NestJS API: sign-in, guards, REST endpoints (docs at `/api/docs`), webhooks, file links |
-| `worker/` | Node service: IReV fetch jobs, duplicate-sheet detection, OCR, trend check, notifications, top-ups, voice dialer, import scripts |
+| `apps/api/` | NestJS API: sign-in, guards, REST endpoints (docs at `/api/docs`), webhooks, file links, live updates (`src/live`), the worker (`src/worker`, started by `worker.main.ts`) and import scripts (`src/scripts`) |
 | `apps/dashboard/` | Angular Material situation room (Rumfa Room) |
 | `apps/agent/` | Ionic + Capacitor mobile app (Rumfa Agent) |
 | `legacy/` | Earlier prototype server, not used |
@@ -72,7 +73,7 @@ The first admin gets an invite created with SQL or the `inviteStaff` service; af
 npm test
 ```
 
-This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`), the database scenario tests (`db/tests/run.sh`) and the API end-to-end tests (`apps/api`, a fresh `rumfa_e2e` database per run). The last two need a local Postgres with `createdb`.
+This runs the shared codec tests, the database scenario tests (`db/tests/run.sh`), the API and worker unit tests (including duplicate-sheet detection on the real IReV samples in `samples/`) and the end-to-end tests (`apps/api/test`: API, live updates and worker jobs, on a fresh `rumfa_e2e` database per run). The database and end-to-end tests need a local Postgres with `createdb`.
 
 ## Set up Supabase as the database host
 
@@ -88,20 +89,19 @@ Provider callback URLs (all carry the webhook key):
 - VTpass: `https://<api-host>/api/v1/webhooks/vtpass?key=<WEBHOOK_KEY>`
 - LiveKit: `https://<api-host>/api/v1/webhooks/livekit?key=<WEBHOOK_KEY>` (also checks LiveKit's signature)
 
-## Load reference data and people
+## Run the worker and load data
 
 ```bash
-cd worker
-cp .env.example .env    # fill in
-npm run import:geography -- --states 18,19          # LGAs, wards, units from IReV (default: 19 northern states + FCT)
-npm run import:inec-contacts                          # INEC state offices, RECs, LGA offices, hotlines
+cd apps/api && npm run build
+npm run start:worker                                   # deadlines, notifications, top-ups, OCR, dialer, IReV jobs
+npm run import:geography -- --states 18,19             # LGAs, wards, units from IReV (default: 19 northern states + FCT)
+npm run import:inec-contacts                           # INEC state offices, RECs, LGA offices, hotlines
 npm run import:liaison -- --tenant <id> --file liaison.csv
 npm run import:people -- --tenant <id> --file agents.csv --dry-run   # then without --dry-run
 npm run build:sample -- --tenant <id> --election <id> --size 1500
-npm start                                             # the worker itself
 ```
 
-The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `db/seed.sql` shows the shape (it is development data, do not run it in production).
+The worker and scripts use the API's `.env`. The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `db/seed.sql` shows the shape (development data, do not run it in production).
 
 ## Run the apps
 
@@ -116,10 +116,10 @@ cd apps/agent && npx cap add android && npm run android   # Android build
 ## What is verified and what is not
 
 Verified here:
-- 20 API end-to-end tests pass on a fresh database: every sign-in flow, two clients sharing one person, refresh-token reuse, activation codes, PIN lockout, staff sign-in with authenticator, the case flow (including critical cases waiting for a supervisor), EC8A photo upload and view links, callbacks, people, coded SMS routed by agent code, bridged voice calls, case messages, top-up approval, and client B seeing nothing of client A.
+- 25 end-to-end tests pass on a fresh database (API, live updates, worker jobs with providers faked). Live updates: a new case reaches that client's room staff only, events carry ids and status only, and a case timeline reaches only connections allowed to subscribe. Worker: SMS sent in the client's name with retries, IReV sheet download and storage with duplicate-photo alerts on real sheets, top-ups sent once and confirmed by SMS. API: every sign-in flow, two clients sharing one person, refresh-token reuse, activation codes, PIN lockout, staff sign-in with authenticator, the case flow (including critical cases waiting for a supervisor), EC8A photo upload and view links, callbacks, people, coded SMS routed by agent code, bridged voice calls, case messages, top-up approval, and client B seeing nothing of client A.
 - 20 groups of database scenario tests pass (merging, routing, auto-assignment by language, acknowledgement and resolution escalation, supervisor merge and undo, three-source mismatch alerts, callback escalation chain, contact approval rules, two-admin top-up approval, row-level security, service-only functions, dashboard read APIs, two clients sharing one person, and the lockdown of credentials and Supabase's roles).
 - Shared and worker unit tests pass, including the SMS codec and duplicate detection on real 2023 IReV sheets (units 19-28-02-003 and 19-28-02-005 carry the same photo).
-- The API builds and boots on an empty database, applying all migrations.
+- The API and the worker build and start on an empty database (the API applies all migrations).
 
 Not yet verified (needs real accounts or a Supabase project):
 - The API against a live Supabase project (Session pooler, Storage signed links).

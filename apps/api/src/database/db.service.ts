@@ -53,7 +53,7 @@ export class Db {
 }
 
 /** TypeORM returns [rows, affectedCount] for UPDATE/DELETE; callers always get the rows. */
-function rows(r: any): any[] {
+export function rows(r: any): any[] {
   return Array.isArray(r) && r.length === 2 && Array.isArray(r[0]) && typeof r[1] === 'number' ? r[0] : r;
 }
 

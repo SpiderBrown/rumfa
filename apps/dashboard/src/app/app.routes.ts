@@ -24,6 +24,7 @@ export const routes: Routes = [
       { path: 'people', loadComponent: () => import('./pages/people').then((m) => m.PeoplePage) },
       { path: 'shifts', canActivate: [roles('supervisor', 'admin')], loadComponent: () => import('./pages/shifts').then((m) => m.ShiftsPage) },
       { path: 'topups', canActivate: [roles('admin')], loadComponent: () => import('./pages/topups').then((m) => m.TopupsPage) },
+      { path: 'settings', canActivate: [roles('admin')], loadComponent: () => import('./pages/settings').then((m) => m.SettingsPage) },
       { path: 'voice', canActivate: [roles('voice_ops', 'admin')], loadComponent: () => import('./pages/voice').then((m) => m.VoicePage) },
     ],
   },

@@ -179,6 +179,33 @@ describe('API endpoints and webhooks (e2e)', () => {
     const seen = await http.get(api(`/channels/${ch}`)).set(as(AGENT3)).expect(200);
     expect(seen.body.messages.some((m: any) => m.body === 'Is the BVAS working now?' && m.sender_name === 'Supervisor Kano')).toBe(true);
     await http.get(api(`/channels/${ch}`)).set(as('adminB')).expect(404);
+
+    // Call from the chat: the agent sees the supervisor who wrote, gets the number, and the call is logged
+    const people = await http.get(api(`/channels/${ch}/people`)).set(as(AGENT3)).expect(200);
+    const sup = people.body.find((p: any) => p.full_name === 'Supervisor Kano');
+    expect(sup).toBeTruthy();
+    expect(sup.phone).toBeUndefined();
+    const c = await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id }).expect(200);
+    expect(c.body.phone).toMatch(/^\+234/);
+    await http.get(api(`/channels/${ch}/people`)).set(as('adminB')).expect(404);
+    await http.post(api(`/channels/${ch}/call`)).set(as('adminB')).send({ personId: sup.id }).expect(404);
+
+    // Each organisation switches the calling options on or off; the API enforces them
+    const ctx = await http.get(api('/me/context')).set(as(AGENT3)).expect(200);
+    expect(ctx.body.calls).toEqual({ phone: true, bridged: true, webrtc: false });
+    await http.patch(api('/settings/calls')).set(as(SUP)).send({ phone: false }).expect(403);
+    const off = await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ phone: false, bridged: false }).expect(200);
+    expect(off.body).toEqual({ phone: false, bridged: false, webrtc: false });
+    await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'phone' }).expect(403);
+    await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'bridged' }).expect(403);
+    await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'webrtc' }).expect(403);
+    await http.post(api('/calls/token')).set(as(AGENT3)).expect(403);
+    await http.post(api('/calls/bridge')).set(as(AGENT3)).send({ volunteerId: sup.id }).expect(403);
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ webrtc: true }).expect(200);
+    const w = await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'webrtc' }).expect(200);
+    expect(w.body.phone).toMatch(/^\+234/);
+    expect((await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body.calls).toEqual({ phone: false, bridged: false, webrtc: true });
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ phone: true, bridged: true, webrtc: false }).expect(200);
   });
 
   it('two admins are needed for a top-up batch', async () => {

@@ -2,13 +2,15 @@ import { Injectable, computed, signal } from '@angular/core';
 import { io, type Socket } from 'socket.io-client';
 
 declare global {
-  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string } }
+  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string; atWebrtcScript?: string } }
 }
 
 export interface Me {
   id: string; tenant_id: string; full_name: string; phone: string; role: string; level: string; area_code: string;
   agent_code: string | null; languages: string[]; network: string | null; onboarded_at: string | null; deputy_of: string | null; brand: string;
 }
+/** Ways the organisation lets people call from the app (its admins switch these on or off). */
+export interface CallOptions { phone: boolean; bridged: boolean; webrtc: boolean }
 export interface Membership { mid: string; tid: string; brand: string; name: string; role: string; level: string; area: string }
 export interface Change { t: string; op: string; id?: string; case_id?: string; channel_id?: string; status?: string }
 interface Session { accessToken: string; refreshToken: string; expiresIn: number; membership: Membership }
@@ -43,6 +45,7 @@ export class Api {
   readonly me = signal<Me | null>(read<any>(K.context)?.me ?? null);
   readonly parties = signal<string[]>(read<any>(K.context)?.parties ?? []);
   readonly otherMemberships = signal<Membership[]>(read<any>(K.context)?.otherMemberships ?? []);
+  readonly callOptions = signal<CallOptions>(read<any>(K.context)?.calls ?? { phone: true, bridged: false, webrtc: false });
   readonly brand = signal<string>(this.me()?.brand ?? this.config.brand ?? 'Rumfa');
   readonly isAgent = computed(() => this.me()?.role === 'agent');
   readonly isCoordinator = computed(() => this.me()?.role === 'coordinator');
@@ -106,10 +109,11 @@ export class Api {
 
   async refreshMe(): Promise<void> {
     const [ctx, me] = await Promise.all([this.call<any>('GET', '/me/context'), this.call<any>('GET', '/auth/me')]);
-    const cache = { me: ctx.me, parties: ctx.parties, categories: ctx.categories, otherMemberships: me.otherMemberships };
+    const cache = { me: ctx.me, parties: ctx.parties, categories: ctx.categories, otherMemberships: me.otherMemberships, calls: ctx.calls };
     localStorage.setItem(K.context, JSON.stringify(cache));
     this.me.set(ctx.me);
     this.parties.set(ctx.parties);
+    if (ctx.calls) this.callOptions.set(ctx.calls);
     this.otherMemberships.set(me.otherMemberships);
     this.brand.set(ctx.me.brand);
     this.connectLive();

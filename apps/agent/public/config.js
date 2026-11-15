@@ -8,4 +8,6 @@ window.RUMFA_CONFIG = {
   smsNumber: '+2340000000000',
   // Coordinator helpline shown on the help screen
   helpline: '',
+  // Africa's Talking WebRTC client script, for internet calls (only used when the organisation turns them on)
+  atWebrtcScript: '',
 };

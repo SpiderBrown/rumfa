@@ -11,13 +11,14 @@ import { MediaController } from './media.controller';
 import { MessagesController } from './messages.controller';
 import { PeopleController } from './people.controller';
 import { ResultsController } from './results.controller';
+import { SettingsController } from './settings.controller';
 import { WebhooksController } from '../webhooks/webhooks.controller';
 
 @Module({
   controllers: [
     ContextController, PeopleController, CasesController, FieldController, ResultsController, CallbacksController,
     ContactsController, MessagesController, ShiftsController, TopupsController, VoiceController, MediaController,
-    LiveViewController, CallsController, WebhooksController,
+    LiveViewController, CallsController, SettingsController, WebhooksController,
   ],
 })
 export class DomainModule {}

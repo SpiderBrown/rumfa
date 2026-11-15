@@ -5,7 +5,8 @@ import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { ProvidersService } from '../common/providers.service';
-import { ROOM } from './roles';
+import { FIELD, ROOM } from './roles';
+import { requireCallMode } from '../common/tenant-settings';
 
 class PrepareDto {
   @ApiProperty({ enum: ['volunteer', 'contact'] }) @IsIn(['volunteer', 'contact']) target: string;
@@ -25,9 +26,10 @@ class BridgeDto {
 export class CallsController {
   constructor(private readonly db: Db, private readonly providers: ProvidersService) {}
 
-  @Post('token') @HttpCode(200) @Roles(...ROOM, 'coordinator')
-  @ApiOperation({ summary: 'Browser calling token (headset calls from the dashboard)' })
-  token(@CurrentUser() u: AuthUser) {
+  @Post('token') @HttpCode(200)
+  @ApiOperation({ summary: 'Internet calling token (dashboard headset calls; agent app when the organisation allows it)' })
+  async token(@CurrentUser() u: AuthUser) {
+    if (FIELD.includes(u.role)) await requireCallMode(this.db, u.tid, 'webrtc');
     return this.providers.atCapabilityToken(`v${u.mid.replaceAll('-', '').slice(0, 20)}`);
   }
 
@@ -56,6 +58,7 @@ export class CallsController {
   /** Bridged call between two app users over the phone network (when data is too poor for an in-app call). */
   @Post('bridge') @HttpCode(200)
   async bridge(@CurrentUser() u: AuthUser, @Body() d: BridgeDto) {
+    if (FIELD.includes(u.role)) await requireCallMode(this.db, u.tid, 'bridged');
     const [other] = await this.db.asUser(u, (q) => q(`select id, phone from public.volunteers where id = $1 and tenant_id = $2`, [d.volunteerId, u.tid]));
     if (!other) throw new NotFoundException('Person not found');
     const [me] = await this.db.system(`select phone from public.volunteers where id = $1`, [u.mid]);

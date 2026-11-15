@@ -4,6 +4,8 @@ import { IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader,
 import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { takePhoto } from '../core/photo';
+import { Ui } from '../core/ui';
+import { Calls, type Callee } from '../core/calls';
 
 /** A chat thread. Messages typed offline are queued and sent when there is signal. */
 @Component({
@@ -11,7 +13,16 @@ import { takePhoto } from '../core/photo';
   imports: [FormsModule, IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonTitle, IonToolbar],
   template: `
   <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/messages" /></ion-buttons>
-    <ion-title>{{ name() }}</ion-title></ion-toolbar></ion-header>
+    <ion-title>{{ name() }}</ion-title>
+    @if (calls.modes().length) {
+      <ion-buttons slot="end"><ion-button (click)="call()" aria-label="Call"><ion-icon slot="icon-only" name="call" /></ion-button></ion-buttons>
+    }
+  </ion-toolbar>
+  @if (calls.active(); as a) {
+    <ion-toolbar color="success"><ion-title size="small">On a call with {{ a.label }}</ion-title>
+      <ion-buttons slot="end"><ion-button (click)="calls.hangup()">Hang up</ion-button></ion-buttons></ion-toolbar>
+  }
+  </ion-header>
   <ion-content class="ion-padding">
     @for (m of messages(); track m.id) {
       <div class="msg" [class.mine]="m.sender_id === me">
@@ -35,6 +46,8 @@ export default class ChatPage implements OnDestroy {
   id = input.required<string>();
   private api = inject(Api);
   private outbox = inject(Outbox);
+  private ui = inject(Ui);
+  calls = inject(Calls);
   me = this.api.me()!.id;
   name = signal('');
   messages = signal<any[]>([]);
@@ -70,6 +83,13 @@ export default class ChatPage implements OnDestroy {
     if (!body) return;
     this.draft = '';
     await this.outbox.add('message', { channel: this.id(), body }, 'Message');
+  }
+
+  /** Phone someone in this chat: the other person in a direct chat, or pick from the people who wrote here. */
+  async call() {
+    if (!this.outbox.online()) { await this.ui.error('No internet. Call them from your contacts.'); return; }
+    const people = await this.api.get<Callee[]>(`/channels/${this.id()}/people`).catch(async (e) => { await this.ui.error(e); return null; });
+    if (people) await this.calls.fromChat(this.id(), people);
   }
 
   async photo() {

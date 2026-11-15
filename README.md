@@ -11,6 +11,16 @@ Election-day situation room, results verification against IReV, field agent app,
 
 Each client (tenant) has its own short name in `tenants.settings.brand`, for example `ALAWA`. That name is shown in the apps after sign-in and starts every SMS, so a client's people see their own organisation, not the platform.
 
+Each client's admins also choose how field users can call from a chat in the agent app (dashboard → Settings, stored in `tenants.settings.calls`):
+
+| Option | Setting | Default | How it works |
+|---|---|---|---|
+| Rumfa call | `bridged` | on | Africa's Talking rings the caller, then connects the other person. The client pays; numbers stay hidden. |
+| Internet call | `webrtc` | off | The caller speaks over mobile data through the Africa's Talking WebRTC client (`atWebrtcScript` in the agent's `config.js`); the other person gets a normal call. |
+| Phone call | `phone` | on | The phone's own dialler, on the caller's airtime. |
+
+The API enforces these switches (`POST /channels/:id/call`, `/calls/token`, `/calls/bridge` for field roles). Dashboard staff calling is not affected.
+
 Design: *Rumfa Platform: Software Design Document* (Claude Docs). Sections 9 and 16 describe the backend.
 
 ## Architecture

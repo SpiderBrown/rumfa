@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { path: '/shifts', icon: 'schedule', text: 'Shifts and queues', roles: ['supervisor', 'admin'] },
   { path: '/topups', icon: 'sim_card', text: 'Airtime and data', roles: ['admin'] },
   { path: '/voice', icon: 'campaign', text: 'Voice outreach', roles: ['voice_ops', 'admin'] },
+  { path: '/settings', icon: 'settings', text: 'Settings', roles: ['admin'] },
 ];
 
 @Component({

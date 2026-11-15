@@ -18,8 +18,11 @@ Each client's admins also choose how field users can call from a chat in the age
 | Rumfa call | `bridged` | on | Africa's Talking rings the caller, then connects the other person. The client pays; numbers stay hidden. |
 | Internet call | `webrtc` | off | The caller speaks over mobile data through the Africa's Talking WebRTC client (`atWebrtcScript` in the agent's `config.js`); the other person gets a normal call. |
 | Phone call | `phone` | on | The phone's own dialler, on the caller's airtime. |
+| App call (free) | `inapp` | off | Voice over the internet between two people using the Rumfa apps (agent app ↔ agent app, or ↔ dashboard), through LiveKit. It rings in the other person's app (live update plus push notification). There's no phone network, so no per-minute charge. Applies to the dashboard too. |
 
-The API enforces these switches (`POST /channels/:id/call`, `/calls/token`, `/calls/bridge` for field roles). Dashboard staff calling is not affected.
+The API enforces these switches (`POST /channels/:id/call`, `/calls/token` and `/calls/bridge` for field roles, `/calls/app/*` for everyone). Dashboard staff phone calling is not affected. App calls need `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`: the same LiveKit server that live video uses. LiveKit is open source: self-hosting it on your own server (`livekit-server`, a single binary or Docker image) has no licence or per-minute fees, only your server's bandwidth. LiveKit Cloud is the paid hosted alternative.
+
+Africa's Talking **voice has no sandbox**. Rumfa calls, internet calls and voice outreach need the live app (`AT_USERNAME`, `AT_API_KEY`) and a voice number (`AT_VOICE_NUMBER`). Until those are set, the API answers with a clear message and the worker skips outreach dialling. SMS works in the sandbox. For development, use the phone-call option.
 
 Design: *Rumfa Platform: Software Design Document* (Claude Docs). Sections 9 and 16 describe the backend.
 
@@ -105,11 +108,42 @@ Provider callback URLs (all carry the webhook key):
 cd apps/api && npm run build
 npm run start:worker                                   # deadlines, notifications, top-ups, OCR, dialer, IReV jobs
 npm run import:geography -- --states 18,19             # LGAs, wards, units from IReV (default: 19 northern states + FCT)
+npm run import:boundaries -- --level state --file nga_admin1.geojson   # map outlines (see "Situation map")
+npm run import:boundaries -- --level lga --file nga_admin2.geojson
+npm run import:boundaries -- --level ward --file nga_wards.geojson
 npm run import:inec-contacts                           # INEC state offices, RECs, LGA offices, hotlines
 npm run import:liaison -- --tenant <id> --file liaison.csv
 npm run import:people -- --tenant <id> --file agents.csv --dry-run   # then without --dry-run
 npm run build:sample -- --tenant <id> --election <id> --size 1500
 ```
+
+### Situation map
+
+Room staff open **Situation map** in the dashboard. Coordinators open **My area map** in the agent app.
+- **What it shows:** each person's own area split into its sub-areas (states → LGAs → wards → polling units). Click an area to go down a level.
+- **Three views:**
+  - **Issues:** heat bands by open cases, weighted by severity. Any open critical case shows darkest.
+  - **Votes:** each area in its leading party's colour, stronger for a wider lead. Each unit counts its agent's EC8A result, else the IReV sheet, else the quick count.
+  - **Reporting:** the share of units with a result.
+- **Panel:** totals, vote bars and each sub-area's coordinator.
+- **Updates:** live, as cases and verifications change.
+- **Access:** the API (`GET /map`) limits each person to their own area and organisation.
+
+**Outlines** come from free open boundary data that you download as GeoJSON and load with `import:boundaries`:
+- states and LGAs: OCHA's Nigeria administrative boundaries on HDX;
+- wards: GRID3 Nigeria.
+
+Shapes are matched to our codes by name, simplified, and stored once for all clients in `area_shapes`. Names that don't match are listed for review. Load the geography (`import:geography`) first.
+
+**Polling units** are points:
+- `polling_units.lat/lng` when known;
+- otherwise the average location where agents checked in.
+
+**Background tiles** are set by `mapTiles` in each app's `config.js`:
+- the default is OpenStreetMap's free tiles, which suit a small team;
+- set `url: ''` for outlines only, or point it at your own tile server.
+
+**Party colours** are neutral and given out in ballot order. Override them per client with `tenants.settings.party_colours`, for example `{"APC": "#1b7a3a"}`.
 
 The worker and scripts use the API's `.env`. The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `db/seed.sql` shows the shape (development data, do not run it in production).
 

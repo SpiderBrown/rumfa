@@ -3,7 +3,7 @@ import { io, type Socket } from 'socket.io-client';
 
 declare global {
   interface Window {
-    RUMFA_CONFIG: { apiUrl: string; tenantId: string; brand?: string; atWebrtcScript?: string };
+    RUMFA_CONFIG: { apiUrl: string; tenantId: string; brand?: string; atWebrtcScript?: string; mapTiles?: { url: string; attribution?: string } };
   }
 }
 
@@ -43,6 +43,8 @@ export class Api {
   readonly parties = signal<string[]>([]);
   readonly categories = signal<{ code: string; label: string; severity: string; queue_kind: string }[]>([]);
   readonly staffStatus = signal<string | null>(null);
+  /** Calling options the organisation allows (dashboard → Settings). */
+  readonly callOptions = signal<{ phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }>({ phone: true, bridged: true, webrtc: false, inapp: false });
 
   readonly isSupervisor = computed(() => ['supervisor', 'admin'].includes(this.me()?.role ?? ''));
   readonly isAdmin = computed(() => this.me()?.role === 'admin');
@@ -70,6 +72,7 @@ export class Api {
     this.parties.set(ctx.parties);
     this.categories.set(ctx.categories);
     this.staffStatus.set(ctx.staffStatus);
+    if (ctx.calls) this.callOptions.set(ctx.calls);
     this.connectLive();
   }
 

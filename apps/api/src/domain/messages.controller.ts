@@ -7,6 +7,7 @@ import { Db } from '../database/db.service';
 import { callFn, selectFn } from '../common/fn';
 import { ProvidersService } from '../common/providers.service';
 import { CALL_MODES, type CallMode, requireCallMode } from '../common/tenant-settings';
+import { AppCallsService } from './app-calls.service';
 
 class MessageDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(4000) body?: string;
@@ -24,7 +25,7 @@ class ChannelCallDto {
 @ApiBearerAuth()
 @Controller('channels')
 export class MessagesController {
-  constructor(private readonly db: Db, private readonly providers: ProvidersService) {}
+  constructor(private readonly db: Db, private readonly providers: ProvidersService, private readonly appCalls: AppCallsService) {}
 
   /** Channels the caller belongs to (the database decides: case, area and direct channels). */
   @Get()
@@ -79,6 +80,7 @@ export class MessagesController {
    *  - phone:  returns their number for the phone's dialler
    *  - bridged: Rumfa rings the caller's phone, then connects the other person; no number is returned
    *  - webrtc: registers the number so the internet call from the app is let through; returns it for the call client
+   *  - inapp:  free app call over the internet; returns the call room to join while it rings
    */
   @Post(':id/call') @HttpCode(200)
   async call(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: ChannelCallDto) {
@@ -86,9 +88,10 @@ export class MessagesController {
     await requireCallMode(this.db, u.tid, mode);
     const people = await this.people(u, id) as { id: string }[];
     if (!people.some((p) => p.id === d.personId)) throw new NotFoundException('This person is not in the conversation');
+    if (mode === 'inapp') return { mode, ...(await this.appCalls.start(u, d.personId, { reason: 'from chat' })) };
     const [other] = await this.db.system(`select id, phone from public.volunteers where id = $1 and tenant_id = $2`, [d.personId, u.tid]);
     if (!other?.phone) throw new NotFoundException('No phone number for this person');
-    const route = ({ phone: 'gsm_direct', bridged: 'bridged', webrtc: 'webrtc_pstn' } as const)[mode];
+    const route = ({ phone: 'gsm_direct', bridged: 'bridged', webrtc: 'webrtc_pstn' } as const)[mode as Exclude<CallMode, 'inapp'>];
     const [row] = await this.db.system(
       `insert into public.calls (tenant_id, caller_id, callee_id, to_phone, route, reason)
        values ($1, $2, $3, $4, $5, 'from chat') returning id`, [u.tid, u.mid, other.id, other.phone, route]);

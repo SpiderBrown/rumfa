@@ -292,3 +292,54 @@ export function normaliseNgPhone(raw: string): string | null {
   if (!/^[789][01]\d{8}$/.test(d)) return null;
   return `+234${d}`;
 }
+
+// ---------------------------------------------------------------------------
+// Situation-room map colours (dashboard and agent app use the same rules)
+// ---------------------------------------------------------------------------
+
+export interface AreaIssues { open: number; critical: number; high: number; medium: number; low: number }
+export type MapLayer = 'issues' | 'votes' | 'reporting';
+
+/** Weighted open-issue score: a critical case outweighs several minor ones. */
+export function issueScore(i: AreaIssues): number {
+  return i.critical * 8 + i.high * 4 + i.medium * 2 + i.low;
+}
+
+/** Issue heat bands, calm to severe. Any open critical case shows as the darkest band. */
+export const ISSUE_BANDS = [
+  { label: 'No open issues', colour: '#dfeee2' },
+  { label: 'Minor', colour: '#fde68a' },
+  { label: 'Several', colour: '#fb923c' },
+  { label: 'Serious', colour: '#e5484d' },
+  { label: 'Critical open', colour: '#8f1d1d' },
+] as const;
+
+export function issueBand(i: AreaIssues): number {
+  if (i.critical > 0) return 4;
+  const s = issueScore(i);
+  return s === 0 ? 0 : s <= 3 ? 1 : s <= 9 ? 2 : 3;
+}
+
+/** Distinct, party-neutral colours given out in ballot order; a client can set its own per party. */
+const PARTY_PALETTE = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#ca8a04', '#db2777', '#4b5563', '#65a30d'];
+export function partyColour(party: string, ballotOrder: string[], overrides: Record<string, string> = {}): string {
+  if (overrides[party]) return overrides[party];
+  const i = ballotOrder.indexOf(party);
+  if (i >= 0) return PARTY_PALETTE[i % PARTY_PALETTE.length];
+  let h = 0;
+  for (const c of party) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PARTY_PALETTE[h % PARTY_PALETTE.length];
+}
+
+/** Votes layer: stronger fill for a wider lead (margin is the lead over second place as a share of votes). */
+export function leadOpacity(margin: number): number {
+  return Math.round((0.3 + 0.6 * Math.min(1, Math.max(0, margin) * 2.5)) * 100) / 100;
+}
+
+/** Reporting layer: share of polling units with a result, in five blue steps. */
+export const REPORTING_BANDS = ['#eef2f7', '#c6dbef', '#9ecae1', '#4292c6', '#08519c'] as const;
+export function reportingBand(reported: number, units: number): number {
+  if (!units || !reported) return 0;
+  const r = reported / units;
+  return r < 0.25 ? 1 : r < 0.5 ? 2 : r < 0.9 ? 3 : 4;
+}

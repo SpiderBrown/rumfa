@@ -15,6 +15,8 @@ export async function createTestApp(): Promise<{ app: INestApplication; ds: Data
     // Always the local throwaway database and local files, never a hosted one from the shell or .env
     DATABASE_URL: '', DB_HOST: 'localhost', DB_PORT: '5432', DB_SSL: 'false', STORAGE_DRIVER: 'local',
     SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '', AT_API_KEY: '', WHATSAPP_TOKEN: '', VTPASS_API_KEY: '',
+    // LiveKit tokens are only signed in tests, never used
+    LIVEKIT_URL: 'wss://livekit.test', LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret-that-is-long-enough-for-hs256',
   });
   const admin = new Client({ database: 'postgres', user: process.env.DB_USER, password: process.env.DB_PASSWORD, host: 'localhost' });
   await admin.connect();

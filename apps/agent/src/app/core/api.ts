@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import { io, type Socket } from 'socket.io-client';
 
 declare global {
-  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string; atWebrtcScript?: string } }
+  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string; atWebrtcScript?: string; mapTiles?: { url: string; attribution?: string } } }
 }
 
 export interface Me {
@@ -10,7 +10,7 @@ export interface Me {
   agent_code: string | null; languages: string[]; network: string | null; onboarded_at: string | null; deputy_of: string | null; brand: string;
 }
 /** Ways the organisation lets people call from the app (its admins switch these on or off). */
-export interface CallOptions { phone: boolean; bridged: boolean; webrtc: boolean }
+export interface CallOptions { phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }
 export interface Membership { mid: string; tid: string; brand: string; name: string; role: string; level: string; area: string }
 export interface Change { t: string; op: string; id?: string; case_id?: string; channel_id?: string; status?: string }
 interface Session { accessToken: string; refreshToken: string; expiresIn: number; membership: Membership }
@@ -45,7 +45,7 @@ export class Api {
   readonly me = signal<Me | null>(read<any>(K.context)?.me ?? null);
   readonly parties = signal<string[]>(read<any>(K.context)?.parties ?? []);
   readonly otherMemberships = signal<Membership[]>(read<any>(K.context)?.otherMemberships ?? []);
-  readonly callOptions = signal<CallOptions>(read<any>(K.context)?.calls ?? { phone: true, bridged: false, webrtc: false });
+  readonly callOptions = signal<CallOptions>(read<any>(K.context)?.calls ?? { phone: true, bridged: false, webrtc: false, inapp: false });
   readonly brand = signal<string>(this.me()?.brand ?? this.config.brand ?? 'Rumfa');
   readonly isAgent = computed(() => this.me()?.role === 'agent');
   readonly isCoordinator = computed(() => this.me()?.role === 'coordinator');

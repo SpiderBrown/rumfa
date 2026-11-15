@@ -4,11 +4,12 @@ import { CALLBACK_REASONS } from '@rumfa/shared';
 import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
+import { AgoPipe } from '../core/clock';
 
 /** Coordinator's callback queue. Call rings the coordinator's phone first, then connects the agent (normal phone lines). */
 @Component({
   selector: 'page-coord-callbacks',
-  imports: [IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonTitle, IonToolbar],
+  imports: [IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonTitle, IonToolbar, AgoPipe],
   template: `
   <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
     <ion-title>{{ t('Callback requests') }}</ion-title></ion-toolbar></ion-header>
@@ -17,7 +18,7 @@ import { Ui } from '../core/ui';
       @for (r of rows(); track r.id) {
         <ion-item>
           <ion-label class="ion-text-wrap"><h2>{{ r.requester?.full_name }}</h2>
-            <p>{{ reason(r.reason) }} · {{ r.requester?.area_code }} · {{ waiting(r.created_at) }}</p>
+            <p>{{ reason(r.reason) }} · {{ r.requester?.area_code }} · {{ r.created_at | ago }}</p>
             @if (r.status === 'no_answer') { <p>No answer last time</p> }</ion-label>
           @if (r.status === 'calling') {
             <ion-button slot="end" color="success" (click)="done(r, true)">Talked</ion-button>
@@ -42,7 +43,6 @@ export default class CoordCallbacksPage implements OnDestroy {
   ngOnDestroy() { this.stopLive(); }
 
   reason(c: string) { return CALLBACK_REASONS.find((r) => r.code === c)?.label ?? c; }
-  waiting(t: string) { return `${Math.round((Date.now() - new Date(t).getTime()) / 60000)} min ago`; }
 
   async load() {
     this.rows.set(await this.api.get<any[]>('/callbacks', { mine: true, status: 'waiting,calling,no_answer' }).catch(() => this.rows()));

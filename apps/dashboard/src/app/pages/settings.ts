@@ -3,7 +3,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
-interface CallSettings { phone: boolean; bridged: boolean; webrtc: boolean }
+interface CallSettings { phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }
 
 /** The organisation's own settings. Admins only. */
 @Component({
@@ -12,8 +12,12 @@ interface CallSettings { phone: boolean; bridged: boolean; webrtc: boolean }
   template: `
   <h1>Settings</h1>
   <h2>Calls in the agent app</h2>
-  <p class="hint">How agents, volunteers and coordinators can call people from a chat. Turn on at least one. Room staff always call from this dashboard.</p>
+  <p class="hint">How agents, volunteers and coordinators can call people from a chat. Turn on at least one. Room staff always have phone calling in this dashboard; app calls follow the switch below in both apps.</p>
   @if (calls(); as c) {
+    <div class="opt">
+      <mat-slide-toggle [checked]="c.inapp" (change)="set('inapp', $event.checked)">App call (free)</mat-slide-toggle>
+      <p>A voice call over the internet between two people using the Rumfa apps: agent app to agent app, or with this dashboard. No phone network, so no per-minute charge; both people need data. Applies to the dashboard too. Needs LiveKit set up on the server.</p>
+    </div>
     <div class="opt">
       <mat-slide-toggle [checked]="c.bridged" (change)="set('bridged', $event.checked)">Rumfa call</mat-slide-toggle>
       <p>Rumfa rings the caller's phone, then connects the other person. Your organisation pays for the minutes, and no one sees the other person's number. Calls can be recorded.</p>
@@ -26,7 +30,7 @@ interface CallSettings { phone: boolean; bridged: boolean; webrtc: boolean }
       <mat-slide-toggle [checked]="c.phone" (change)="set('phone', $event.checked)">Phone call</mat-slide-toggle>
       <p>Opens the phone's own dialler. Works on the weakest signal, but uses the caller's airtime and shows them the number.</p>
     </div>
-    @if (!c.phone && !c.bridged && !c.webrtc) { <p class="warn">All calling is off: the call button is hidden in the agent app.</p> }
+    @if (!c.phone && !c.bridged && !c.webrtc && !c.inapp) { <p class="warn">All calling is off: the call button is hidden in the agent app.</p> }
   }`,
   styles: `h1 { font: var(--mat-sys-headline-small); } .hint { color: var(--mat-sys-on-surface-variant); max-width: 640px; }
     .opt { margin: 16px 0; max-width: 640px; } .opt p { margin: 4px 0 0 52px; font-size: 13px; color: var(--mat-sys-on-surface-variant); }

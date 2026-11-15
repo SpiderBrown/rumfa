@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -15,7 +15,9 @@ interface NavItem { path: string; icon: string; text: string; roles?: string[] }
 
 const NAV: NavItem[] = [
   { path: '/room', icon: 'support_agent', text: 'Situation room' },
+  { path: '/map', icon: 'map', text: 'Situation map', roles: ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'] },
   { path: '/callbacks', icon: 'phone_callback', text: 'Callback requests' },
+  { path: '/live-count', icon: 'ballot', text: 'Live count', roles: ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'] },
   { path: '/results', icon: 'how_to_vote', text: 'Live results', roles: ['analyst', 'supervisor', 'admin', 'legal', 'operator'] },
   { path: '/irev', icon: 'cloud_download', text: 'IReV data', roles: ['analyst', 'supervisor', 'admin'] },
   { path: '/irev/review', icon: 'fact_check', text: 'Sheet review', roles: ['analyst', 'supervisor', 'admin', 'legal'] },
@@ -48,8 +50,23 @@ const NAV: NavItem[] = [
         <span class="who">{{ api.me()?.full_name }} · {{ label(api.me()?.role) }} · {{ api.me()?.area_code }}</span>
         <span class="spacer"></span>
         @if (calls.active(); as c) {
-          <span class="oncall"><mat-icon>call</mat-icon> On call with {{ c.label }} ({{ c.via === 'browser' ? 'headset' : 'your phone' }})</span>
-          <button mat-stroked-button (click)="calls.hangup()">Hang up</button>
+          @switch (c.phase) {
+            @case ('incoming') {
+              <span class="oncall ring"><mat-icon>ring_volume</mat-icon> App call from {{ c.label }}</span>
+              <button mat-flat-button (click)="calls.answer()">Answer</button>
+              <button mat-stroked-button (click)="calls.hangup()">Decline</button>
+            }
+            @case ('calling') {
+              <span class="oncall"><mat-icon>call</mat-icon> Calling {{ c.label }} in the app…</span>
+              <button mat-stroked-button (click)="calls.hangup()">Cancel</button>
+            }
+            @default {
+              <span class="oncall"><mat-icon>call</mat-icon> On call with {{ c.label }}
+                ({{ c.via === 'browser' ? 'headset' : c.via === 'app' ? 'app call' : 'your phone' }})</span>
+              @if (c.via === 'app') { <button mat-stroked-button (click)="calls.toggleMute()">{{ c.muted ? 'Unmute' : 'Mute' }}</button> }
+              <button mat-stroked-button (click)="calls.hangup()">Hang up</button>
+            }
+          }
         }
         @if (api.isRoom()) {
           <mat-button-toggle-group [value]="status()" (change)="setStatus($event.value)" hideSingleSelectionIndicator>
@@ -72,6 +89,7 @@ const NAV: NavItem[] = [
     .who { color: var(--mat-sys-on-surface-variant); }
     .spacer { flex: 1; }
     .oncall { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-primary); }
+    .oncall.ring { color: var(--mat-sys-tertiary); font-weight: 600; }
     .content { padding: 20px 24px; }
   `,
 })
@@ -84,9 +102,15 @@ export class Shell {
   status = signal('offline');
   nav = computed(() => NAV.filter((n) => !n.roles || n.roles.includes(this.api.me()?.role ?? '')));
 
+  private stopCalls: () => void;
+
   constructor() {
     const s = this.api.staffStatus();
     if (s) this.status.set(s);
+    // App calls ringing for me, answered or ended
+    this.stopCalls = this.api.onChange((c) => this.calls.onCallChange(c), ['calls']);
+    void this.calls.checkIncoming();
+    inject(DestroyRef).onDestroy(() => this.stopCalls());
   }
 
   async setStatus(s: string) {

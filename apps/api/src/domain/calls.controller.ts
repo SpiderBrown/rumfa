@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
@@ -6,6 +6,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { ProvidersService } from '../common/providers.service';
 import { FIELD, ROOM } from './roles';
+import { AppCallsService } from './app-calls.service';
 import { requireCallMode } from '../common/tenant-settings';
 
 class PrepareDto {
@@ -14,6 +15,12 @@ class PrepareDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() caseId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) reason?: string;
 }
+class AppCallDto {
+  @ApiProperty() @IsUUID() volunteerId: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() caseId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+class EndDto { @ApiPropertyOptional({ enum: ['hangup', 'declined', 'timeout'] }) @IsOptional() @IsIn(['hangup', 'declined', 'timeout']) reason?: 'hangup' | 'declined' | 'timeout'; }
 class BridgeDto {
   @ApiProperty() @IsUUID() volunteerId: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() caseId?: string;
@@ -24,7 +31,7 @@ class BridgeDto {
 @ApiBearerAuth()
 @Controller('calls')
 export class CallsController {
-  constructor(private readonly db: Db, private readonly providers: ProvidersService) {}
+  constructor(private readonly db: Db, private readonly providers: ProvidersService, private readonly appCalls: AppCallsService) {}
 
   @Post('token') @HttpCode(200)
   @ApiOperation({ summary: 'Internet calling token (dashboard headset calls; agent app when the organisation allows it)' })
@@ -67,8 +74,38 @@ export class CallsController {
       `insert into public.calls (tenant_id, case_id, caller_id, callee_id, to_phone, route, reason)
        values ($1, $2, $3, $4, $5, 'bridged', $6) returning id`,
       [u.tid, d.caseId ?? null, u.mid, other.id, other.phone, d.reason ?? 'in-app fallback']);
-    const sessionId = await this.providers.atMakeCall(me.phone, call.id);
-    await this.db.system(`update public.calls set provider_session_id = $2, status = 'ringing' where id = $1`, [call.id, sessionId]);
+    try {
+      const sessionId = await this.providers.atMakeCall(me.phone, call.id);
+      await this.db.system(`update public.calls set provider_session_id = $2, status = 'ringing' where id = $1`, [call.id, sessionId]);
+    } catch (e) {
+      await this.db.system(`update public.calls set status = 'failed', ended_at = now() where id = $1`, [call.id]);
+      throw e;
+    }
     return { callId: call.id, bridged: true };
   }
+
+  // ---- App calls (free, over the internet through LiveKit) -------------------------------------------
+  /** Rings someone the caller can see. From a chat, use POST /channels/:id/call with mode 'inapp'. */
+  @Post('app') @HttpCode(200)
+  @ApiOperation({ summary: 'Start a free app call to someone you can see' })
+  async startApp(@CurrentUser() u: AuthUser, @Body() d: AppCallDto) {
+    const [v] = await this.db.asUser(u, async (q) => {
+      if (d.caseId && !(await q(`select 1 from public.cases where id = $1`, [d.caseId])).length) throw new NotFoundException('Case not found');
+      return q(`select id from public.volunteers where id = $1 and tenant_id = $2`, [d.volunteerId, u.tid]);
+    });
+    if (!v) throw new NotFoundException('Person not found');
+    return this.appCalls.start(u, v.id, { caseId: d.caseId, reason: d.reason });
+  }
+
+  @Get('app/incoming')
+  incoming(@CurrentUser() u: AuthUser) { return this.appCalls.incoming(u); }
+
+  @Get('app/:id')
+  getApp(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.appCalls.get(u, id); }
+
+  @Post('app/:id/answer') @HttpCode(200)
+  answer(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.appCalls.answer(u, id); }
+
+  @Post('app/:id/end') @HttpCode(200)
+  end(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: EndDto) { return this.appCalls.end(u, id, d.reason); }
 }

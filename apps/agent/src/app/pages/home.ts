@@ -28,13 +28,14 @@ import { Ui } from '../core/ui';
         <a class="tile" routerLink="/checklist"><ion-icon name="list" />{{ t('Checklist') }}</a>
         <a class="tile" routerLink="/report"><ion-icon name="warning" />{{ t('Report a problem') }}</a>
         <a class="tile sos" routerLink="/report" [queryParams]="{ sos: 1 }"><ion-icon name="alert-circle" />{{ t('SOS') }}</a>
-        <a class="tile" routerLink="/quick"><ion-icon name="speedometer" />{{ t('Quick count') }}</a>
+        @if (api.isAgent()) { <a class="tile" routerLink="/count"><ion-icon name="speedometer" />{{ t('Live count') }}</a> }
         @if (api.isAgent()) { <a class="tile" routerLink="/result"><ion-icon name="document-text" />{{ t('Submit result (EC8A)') }}</a> }
       }
       <a class="tile" routerLink="/callback"><ion-icon name="call" />{{ t('Ask my coordinator to call me') }}</a>
       <a class="tile" routerLink="/messages"><ion-icon name="chatbubbles" />{{ t('Messages') }}</a>
       @if (api.isCoordinator()) {
         <a class="tile" routerLink="/coord/callbacks"><ion-icon name="call-outline" />{{ t('Callback requests') }}</a>
+        <a class="tile" routerLink="/coord/map"><ion-icon name="map" />{{ t('My area map') }}</a>
         <a class="tile" routerLink="/coord/team"><ion-icon name="people" />{{ t('My team') }}</a>
         <a class="tile" routerLink="/coord/contact"><ion-icon name="shield-checkmark" />{{ t('Add authority contact') }}</a>
       }

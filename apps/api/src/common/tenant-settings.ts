@@ -6,15 +6,18 @@ import type { Db } from '../database/db.service';
  *  - phone:  the phone's own dialler, on the caller's airtime (works on weak signal; the number is shown)
  *  - bridged: Rumfa call. The platform rings the caller first, then the other person (client pays; numbers stay hidden)
  *  - webrtc: internet call. The caller speaks over mobile data; the other person gets a normal phone call
- * Dashboard staff always have their own calling; these switches are for field users.
+ *  - inapp:  app call. Free voice call over the internet between two people in the Rumfa apps (agent app or
+ *            dashboard), through LiveKit; no phone network, so no per-minute charge
+ * phone, bridged and webrtc are for field users (dashboard staff have their own phone calling);
+ * inapp applies to both apps.
  */
-export type CallMode = 'phone' | 'bridged' | 'webrtc';
-export const CALL_MODES: CallMode[] = ['phone', 'bridged', 'webrtc'];
+export type CallMode = 'phone' | 'bridged' | 'webrtc' | 'inapp';
+export const CALL_MODES: CallMode[] = ['phone', 'bridged', 'webrtc', 'inapp'];
 export type CallSettings = Record<CallMode, boolean>;
 
 export function callSettings(settings: any): CallSettings {
   const c = settings?.calls ?? {};
-  return { phone: c.phone ?? true, bridged: c.bridged ?? true, webrtc: c.webrtc ?? false };
+  return { phone: c.phone ?? true, bridged: c.bridged ?? true, webrtc: c.webrtc ?? false, inapp: c.inapp ?? false };
 }
 
 export async function tenantCallSettings(db: Db, tenantId: string): Promise<CallSettings> {
@@ -24,6 +27,6 @@ export async function tenantCallSettings(db: Db, tenantId: string): Promise<Call
 
 export async function requireCallMode(db: Db, tenantId: string, mode: CallMode) {
   if (!(await tenantCallSettings(db, tenantId))[mode]) {
-    throw new ForbiddenException(({ phone: 'Phone calls', bridged: 'Rumfa calls', webrtc: 'Internet calls' } as const)[mode] + ' are turned off for your organisation');
+    throw new ForbiddenException(({ phone: 'Phone calls', bridged: 'Rumfa calls', webrtc: 'Internet calls', inapp: 'App calls' } as const)[mode] + ' are turned off for your organisation');
   }
 }

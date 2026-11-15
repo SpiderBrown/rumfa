@@ -340,3 +340,11 @@ exception when insufficient_privilege then null;
 end $$;
 reset role;
 select 'isolation and lockdown checks passed' as result;
+
+-- IReV state numbers: alphabetical with the FCT 15th (checked against IReV unit codes)
+select t.ok((select irev_state_no from public.states where code = '01') = 1, 'Abia is IReV 1');
+select t.ok((select irev_state_no from public.states where code = '14') = 14, 'Enugu is IReV 14');
+select t.ok((select irev_state_no from public.states where code = '37') = 15, 'FCT is IReV 15');
+select t.ok((select irev_state_no from public.states where code = '19') = 20, 'Kano is IReV 20');
+select t.ok((select irev_state_no from public.states where code = '36') = 37, 'Zamfara is IReV 37');
+select t.ok((select count(distinct irev_state_no) from public.states) = 37, 'IReV state numbers are unique');

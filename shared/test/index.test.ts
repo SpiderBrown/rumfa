@@ -51,3 +51,19 @@ test('phone and pu code normalisation', () => {
   assert.equal(normalisePuCode('19/28/02/003'), '19-28-02-003');
   assert.equal(areaAt('19-28-02-003', 'lga'), '19-28');
 });
+
+test('map colours: issues, parties, reporting', async () => {
+  const { issueBand, partyColour, leadOpacity, reportingBand } = await import('../src/index.ts');
+  const none = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
+  assert.equal(issueBand(none), 0);
+  assert.equal(issueBand({ ...none, open: 2, low: 2 }), 1);
+  assert.equal(issueBand({ ...none, open: 2, high: 2 }), 2);
+  assert.equal(issueBand({ ...none, open: 3, high: 3 }), 3);
+  assert.equal(issueBand({ ...none, open: 1, critical: 1 }), 4);
+  const order = ['APC', 'PDP', 'LP'];
+  assert.notEqual(partyColour('APC', order), partyColour('PDP', order));
+  assert.equal(partyColour('APC', order, { APC: '#123456' }), '#123456');
+  assert.equal(partyColour('XYZ', order), partyColour('XYZ', order));
+  assert.ok(leadOpacity(0) < leadOpacity(0.2) && leadOpacity(1) <= 0.9);
+  assert.deepEqual([reportingBand(0, 10), reportingBand(1, 10), reportingBand(3, 10), reportingBand(6, 10), reportingBand(10, 10)], [0, 1, 2, 3, 4]);
+});

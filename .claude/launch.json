@@ -30,9 +30,47 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd apps/api && DB_NAME=rumfa_dev DB_USER=$USER DB_PASSWORD= OTP_MODE=fixed FIXED_OTP=246810 STORAGE_DRIVER=local STORAGE_DIR=$TMPDIR/rumfa-dev-storage WEBHOOK_KEY=dev-webhook-key-long-enough-x node dist/main"
+        "cd apps/api && DATABASE_URL= DB_HOST=localhost DB_SSL=false SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= DB_NAME=rumfa_dev DB_USER=$USER DB_PASSWORD= OTP_MODE=fixed FIXED_OTP=246810 STORAGE_DRIVER=local STORAGE_DIR=$TMPDIR/rumfa-dev-storage WEBHOOK_KEY=dev-webhook-key-long-enough-x node dist/main"
       ],
       "port": 3000
+    },
+    {
+      "name": "dashboard-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "apps/dashboard",
+        "start",
+        "--",
+        "--port",
+        "4200"
+      ],
+      "port": 4200
+    },
+    {
+      "name": "agent-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "apps/agent",
+        "start",
+        "--",
+        "--port",
+        "4201"
+      ],
+      "port": 4201
+    },
+    {
+      "name": "agent-dist-2",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4302",
+        "-d",
+        "apps/agent/dist/agent/browser"
+      ],
+      "port": 4302
     }
   ]
 }

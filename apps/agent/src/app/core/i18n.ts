@@ -22,6 +22,17 @@ const DICT: Record<string, Record<string, string>> = {
     'My team': 'Tawagata', 'Add authority contact': 'Ƙara lambar hukuma', 'Language': 'Harshe',
     'Registered voters': 'Masu rajista', 'Accredited voters': 'Waɗanda aka tantance', 'Rejected ballots': 'Ƙuri’un da aka ƙi',
     'Total valid votes': 'Jimillar ƙuri’u masu inganci', 'Votes': "Ƙuri'u",
+    'Incoming call': 'Kira mai shigowa', 'Calling': 'Ana kiran', 'On a call with': 'Ana magana da', 'Answer': 'Amsa', 'Decline': "Ƙi",
+    'Hang up': 'Kashe kira', 'Mute': 'Rufe murya', 'Unmute': 'Buɗe murya',
+    'Live count': 'Ƙidaya kai tsaye', 'ballots called': "ƙuri'un da aka kira", 'Unit': 'Rumfa', 'Invalid': 'Marar inganci', 'Undo': 'Soke na ƙarshe',
+    'Correct': 'Gyara', 'Finish': 'Kammala', 'Done': 'Shi ke nan', 'Live': 'Kai tsaye', 'Sending…': 'Ana aikawa…', 'Total': 'Jimilla',
+    'Saved on phone · waiting for signal': 'An ajiye a waya · ana jiran sabis', 'Reopen to correct': 'Buɗe don gyara', 'Loading…': 'Ana lodawa…',
+    'When the INEC official calls out a ballot, tap that party. Tap Invalid for a rejected ballot.': "Idan jami'in INEC ya kira ƙuri'a, danna jam'iyyar. Danna Marar inganci don ƙuri'ar da aka ƙi.",
+    'Correct a number if you missed calls or started late.': 'Gyara lamba idan ka rasa wasu kira ko ka fara a makare.',
+    'Sorting finished. These totals were sent. Submit the signed EC8A result when it is ready.': 'An gama rarrabawa. An aika waɗannan jimilla. Aika sakamakon EC8A da aka sa hannu idan ya shirya.',
+    'My area map': 'Taswirar yankina', 'Issues': 'Matsaloli', 'Reporting': 'Rahotanni', 'reported': 'sun aiko', 'open issues': 'matsalolin da ke buɗe',
+    'critical': 'mai tsanani', 'open': 'a buɗe', 'agents': 'wakilai', 'agent': 'wakili', 'Coordinator': 'Mai kula', 'Wards': 'Gundumomi', 'Polling units': 'Rumfunan zaɓe',
+    'LGAs': 'Ƙananan hukumomi', 'No open issues': 'Babu matsala a buɗe', 'Minor': "Ƙarami", 'Several': 'Da yawa', 'Serious': 'Mai muni', 'Critical open': 'Mai tsanani a buɗe',
   },
 };
 

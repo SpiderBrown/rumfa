@@ -10,7 +10,20 @@ export async function withDb(fn: (q: Q) => Promise<void>): Promise<void> {
   const ds = new DataSource({ ...buildDataSourceOptions(), migrationsRun: false } as any);
   await ds.initialize();
   try {
-    await fn(async (sql, params) => rows(await ds.query(sql, params)));
+    // Long imports survive short network drops (e.g. a phone hotspot): connection errors are retried
+    // for up to ~20 minutes. Statements are single upserts, so a retry never duplicates anything.
+    await fn(async (sql, params) => {
+      for (let attempt = 1; ; attempt++) {
+        try { return rows(await ds.query(sql, params)); } catch (e) {
+          const code = (e as any)?.code ?? (e as any)?.driverError?.code;
+          const network = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'EPIPE', '57P01'].includes(code)
+            || /Connection terminated|connection timeout/i.test((e as Error).message);
+          if (!network || attempt > 80) throw e;
+          console.log(`${new Date().toISOString()} [db] ${code ?? 'connection lost'}; retrying in 15 s (${attempt}/80)`);
+          await new Promise((r) => setTimeout(r, 15_000));
+        }
+      }
+    });
   } catch (e) {
     console.error((e as Error).message);
     process.exitCode = 1;

@@ -1,4 +1,4 @@
-import { Component, Injectable, Pipe, type PipeTransform, inject } from '@angular/core';
+import { Component, Injectable, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
@@ -23,6 +23,13 @@ export class Ui {
   async prompt(title: string, label: string, opts: { value?: string; multiline?: boolean; okLabel?: string } = {}): Promise<string | null> {
     const ref = this.dialog.open(PromptDialog, { data: { title, label, ...opts }, width: '480px' });
     return (await firstValueFrom(ref.afterClosed())) ?? null;
+  }
+
+  /** Pick one of a few options; null when cancelled. */
+  async choose<T>(title: string, text: string, options: { label: string; hint?: string; value: T }[]): Promise<T | null> {
+    const ref = this.dialog.open(ChoiceDialog, { data: { title, text, options }, width: '440px' });
+    const i = await firstValueFrom(ref.afterClosed());
+    return typeof i === 'number' ? options[i].value : null;
   }
 
   async confirm(title: string, text: string, okLabel = 'Confirm'): Promise<boolean> {
@@ -68,17 +75,26 @@ export class PromptDialog {
 })
 export class ConfirmDialog { data = inject<{ title: string; text: string; okLabel: string }>(MAT_DIALOG_DATA); }
 
-/** "3 min ago", "in 2 min" */
-@Pipe({ name: 'ago' })
-export class AgoPipe implements PipeTransform {
-  transform(v: string | null | undefined): string {
-    if (!v) return '';
-    const s = Math.round((Date.now() - new Date(v).getTime()) / 1000);
-    const a = Math.abs(s);
-    const t = a < 60 ? `${a}s` : a < 3600 ? `${Math.round(a / 60)} min` : a < 86400 ? `${Math.round(a / 3600)} h` : `${Math.round(a / 86400)} d`;
-    return s >= 0 ? `${t} ago` : `in ${t}`;
-  }
-}
+@Component({
+  selector: 'app-choice',
+  imports: [MatDialogModule, MatButtonModule],
+  template: `
+    <h2 mat-dialog-title>{{ data.title }}</h2>
+    <mat-dialog-content>
+      @if (data.text) { <p>{{ data.text }}</p> }
+      @for (o of data.options; track $index) {
+        <button mat-stroked-button class="opt" [mat-dialog-close]="$index">
+          <b>{{ o.label }}</b>@if (o.hint) { <span class="hint">{{ o.hint }}</span> }
+        </button>
+      }
+    </mat-dialog-content>
+    <mat-dialog-actions align="end"><button mat-button mat-dialog-close>Cancel</button></mat-dialog-actions>`,
+  styles: `.opt { display: block; width: 100%; height: auto; text-align: left; padding: 10px 14px; margin: 6px 0; }
+    .hint { display: block; font-size: 12px; font-weight: 400; color: var(--mat-sys-on-surface-variant); }`,
+})
+export class ChoiceDialog { data = inject<{ title: string; text?: string; options: { label: string; hint?: string }[] }>(MAT_DIALOG_DATA); }
+
+export { AgoPipe } from './clock';
 
 export const SEVERITY_COLOR: Record<string, string> = { critical: '#b3261e', high: '#c25700', medium: '#8a6d00', low: '#4a6572' };
 

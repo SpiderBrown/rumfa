@@ -18,10 +18,6 @@ import { Calls, type Callee } from '../core/calls';
       <ion-buttons slot="end"><ion-button (click)="call()" aria-label="Call"><ion-icon slot="icon-only" name="call" /></ion-button></ion-buttons>
     }
   </ion-toolbar>
-  @if (calls.active(); as a) {
-    <ion-toolbar color="success"><ion-title size="small">On a call with {{ a.label }}</ion-title>
-      <ion-buttons slot="end"><ion-button (click)="calls.hangup()">Hang up</ion-button></ion-buttons></ion-toolbar>
-  }
   </ion-header>
   <ion-content class="ion-padding">
     @for (m of messages(); track m.id) {

@@ -192,10 +192,10 @@ describe('API endpoints and webhooks (e2e)', () => {
 
     // Each organisation switches the calling options on or off; the API enforces them
     const ctx = await http.get(api('/me/context')).set(as(AGENT3)).expect(200);
-    expect(ctx.body.calls).toEqual({ phone: true, bridged: true, webrtc: false });
+    expect(ctx.body.calls).toEqual({ phone: true, bridged: true, webrtc: false, inapp: false });
     await http.patch(api('/settings/calls')).set(as(SUP)).send({ phone: false }).expect(403);
     const off = await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ phone: false, bridged: false }).expect(200);
-    expect(off.body).toEqual({ phone: false, bridged: false, webrtc: false });
+    expect(off.body).toEqual({ phone: false, bridged: false, webrtc: false, inapp: false });
     await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'phone' }).expect(403);
     await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'bridged' }).expect(403);
     await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'webrtc' }).expect(403);
@@ -204,8 +204,124 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ webrtc: true }).expect(200);
     const w = await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: sup.id, mode: 'webrtc' }).expect(200);
     expect(w.body.phone).toMatch(/^\+234/);
-    expect((await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body.calls).toEqual({ phone: false, bridged: false, webrtc: true });
+    expect((await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body.calls).toEqual({ phone: false, bridged: false, webrtc: true, inapp: false });
     await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ phone: true, bridged: true, webrtc: false }).expect(200);
+  });
+
+  it('app calls: ring, answer, hang up; busy, decline and the on/off switch', async () => {
+    const d = await http.get(api(`/cases/${caseId}`)).set(as(SUP)).expect(200);
+    const ch = d.body.channelId;
+    // Off by default
+    expect((await http.get(api('/me/context')).set(as(AGENT3)).expect(200)).body.calls.inapp).toBe(false);
+    await http.post(api('/calls/app')).set(as(SUP)).send({ volunteerId: AGENT3 }).expect(403);
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ inapp: true }).expect(200);
+
+    // Supervisor rings the agent from the dashboard
+    const start = await http.post(api('/calls/app')).set(as(SUP)).send({ volunteerId: AGENT3, caseId }).expect(200);
+    expect(start.body).toMatchObject({ url: 'wss://livekit.test', callee: { id: AGENT3 } });
+    expect(start.body.token.split('.')).toHaveLength(3);
+    const id = start.body.callId;
+    const inc = await http.get(api('/calls/app/incoming')).set(as(AGENT3)).expect(200);
+    expect(inc.body.map((c: any) => c.id)).toContain(id);
+    expect((await http.get(api(`/calls/app/${id}`)).set(as(AGENT3)).expect(200)).body).toMatchObject({ status: 'ringing', me: 'callee', caller: { id: SUP } });
+    await http.get(api(`/calls/app/${id}`)).set(as(AGENT4)).expect(404);
+    const [push] = await ds.query(`select template, data from public.outbox where to_volunteer = $1 and template = 'app_call' order by id desc limit 1`, [AGENT3]);
+    expect(push.data.call_id).toBe(id);
+
+    // Busy while ringing; only the callee can answer, once
+    await http.post(api('/calls/app')).set(as(ADMIN)).send({ volunteerId: AGENT3 }).expect(409);
+    await http.post(api(`/calls/app/${id}/answer`)).set(as(SUP)).expect(409);
+    const ans = await http.post(api(`/calls/app/${id}/answer`)).set(as(AGENT3)).expect(200);
+    expect(ans.body.token).toBeTruthy();
+    await http.post(api(`/calls/app/${id}/answer`)).set(as(AGENT3)).expect(409);
+    const end = await http.post(api(`/calls/app/${id}/end`)).set(as(SUP)).send({}).expect(200);
+    expect(end.body.status).toBe('completed');
+    expect((await http.post(api(`/calls/app/${id}/end`)).set(as(AGENT3)).send({}).expect(200)).body.status).toBe('ended');
+
+    // From the case chat: the agent rings the supervisor, who declines
+    const chat = await http.post(api(`/channels/${ch}/call`)).set(as(AGENT3)).send({ personId: SUP, mode: 'inapp' }).expect(200);
+    expect(chat.body.mode).toBe('inapp');
+    expect(chat.body.phone).toBeUndefined();
+    const dec = await http.post(api(`/calls/app/${chat.body.callId}/end`)).set(as(SUP)).send({ reason: 'declined' }).expect(200);
+    expect(dec.body.status).toBe('busy');
+
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ inapp: false }).expect(200);
+  });
+
+  it('map: sub-areas with votes and issues, scoped to the person\'s area and organisation', async () => {
+    await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'materials_late', clientId: uuid() }).expect(200);
+
+    // State supervisor: defaults to their state, children are its LGAs with outlines
+    const st = await http.get(api('/map')).set(as(SUP)).expect(200);
+    expect(st.body).toMatchObject({ scope: '19', parent: '19', level: 'state', childLevel: 'lga' });
+    expect(st.body.breadcrumb.map((b: any) => b.code)).toEqual(['19']);
+    const lgaA = st.body.children.find((c: any) => c.code === '19-28');
+    expect(lgaA.shape.type).toBe('Polygon');
+    expect(lgaA).toMatchObject({ units: 12, reported: 1, ec8a: 1, votes: { APC: 150, PDP: 100, LP: 40 } });
+    expect(lgaA.leader).toMatchObject({ party: 'APC', votes: 150 });
+    expect(lgaA.open).toBeGreaterThanOrEqual(1);
+    expect(st.body.children.find((c: any) => c.code === '19-29')).toMatchObject({ reported: 0, open: 0, leader: null });
+
+    // Drill down to a ward's polling units: points, the agent count, the coordinator of the ward shows on the ward
+    const lga = await http.get(api('/map')).set(as(SUP)).query({ parent: '19-28' }).expect(200);
+    expect(lga.body.children.find((c: any) => c.code === '19-28-02').coordinator).toMatchObject({ full_name: 'Ward Coordinator' });
+    const ward = await http.get(api('/map')).set(as(SUP)).query({ parent: '19-28-02' }).expect(200);
+    expect(ward.body.childLevel).toBe('pu');
+    const pu = ward.body.children.find((c: any) => c.code === '19-28-02-003');
+    expect(pu).toMatchObject({ agents: 1, reported: 1 });
+    expect(typeof pu.lat).toBe('number');
+    await http.get(api('/map')).set(as(SUP)).query({ parent: '19-28-02-003' }).expect(400);
+
+    // Ward coordinator: only their ward and below; national admin starts at Nigeria
+    const wc = await http.get(api('/map')).set(as(WARD)).expect(200);
+    expect(wc.body).toMatchObject({ scope: '19-28-02', parent: '19-28-02', childLevel: 'pu' });
+    await http.get(api('/map')).set(as(WARD)).query({ parent: '19-28' }).expect(403);
+    await http.get(api('/map')).set(as(SUP)).query({ parent: '20' }).expect(403);
+    const nat = await http.get(api('/map')).set(as(ADMIN)).expect(200);
+    expect(nat.body).toMatchObject({ parent: 'NG', childLevel: 'state' });
+    expect(nat.body.children.find((c: any) => c.code === '19').reported).toBe(1);
+
+    // Agents have no map; another organisation sees none of client A's numbers
+    await http.get(api('/map')).set(as(AGENT3)).expect(403);
+    const b = await http.get(api('/map')).set(as('adminB')).query({ parent: '19' }).expect(200);
+    // (its own data counts; client A's results and cases never do)
+    const [own] = await ds.query(
+      `select (select count(*) from public.cases where tenant_id = $1 and area_code like '19-28%' and status not in ('resolved','closed','merged'))::int as open,
+              (select count(distinct pu_code) from public.result_submissions where tenant_id = $1 and pu_code like '19-28%')::int as ec8a`, [T_B]);
+    expect(b.body.children.find((c: any) => c.code === '19-28')).toMatchObject({ open: own.open, ec8a: own.ec8a });
+    expect(lgaA.open).toBeGreaterThan(0);
+  });
+
+  it('live count: running totals while sorting, never double-counted, summed for any area', async () => {
+    const send = (seq: number, counts: Record<string, number>, invalid = 0, done?: boolean) =>
+      http.post(api('/live-counts')).set(as(AGENT3)).send({ pu: '19-28-02-003', seq, counts, invalid, done });
+    expect((await send(1, { APC: 3, PDP: 1 }, 1).expect(200)).body).toMatchObject({ seq: 1, status: 'counting' });
+    // Repeats and late messages change nothing
+    expect((await send(1, { APC: 99 }).expect(200)).body).toMatchObject({ seq: 1, stale: true });
+    await send(3, { APC: 5, PDP: 2, LP: 1 }, 1).expect(200);
+    expect((await send(2, { APC: 4, PDP: 2 }, 1).expect(200)).body).toMatchObject({ seq: 3, stale: true });
+    expect((await http.get(api('/live-counts/mine')).set(as(AGENT3)).expect(200)).body).toMatchObject({ seq: 3, total: 9, counts: { APC: 5, PDP: 2, LP: 1 } });
+
+    // Only the agent at that unit, only parties on the ballot
+    await send(4, { XYZ: 1 }).expect(400);
+    await http.post(api('/live-counts')).set(as(AGENT3)).send({ pu: '19-28-02-004', seq: 1, counts: { APC: 1 }, invalid: 0 }).expect(403);
+    await http.post(api('/live-counts')).set(as(SUP)).send({ pu: '19-28-02-003', seq: 9, counts: { APC: 1 }, invalid: 0 }).expect(403);
+
+    // The room sees it summed at state level and per LGA; the ward coordinator at ward level; agents see no summary
+    const st = await http.get(api('/live-counts/summary')).set(as(SUP)).expect(200);
+    expect(st.body).toMatchObject({ area: '19', units: 1, counting: 1, done: 0, ballots: 9, invalid: 1, votes: { APC: 5, PDP: 2, LP: 1 }, childLevel: 'lga' });
+    expect(st.body.children.find((c: any) => c.code === '19-28')).toMatchObject({ units: 1, votes: { APC: 5 } });
+    const wc = await http.get(api('/live-counts/summary')).set(as(WARD)).expect(200);
+    expect(wc.body.children.find((c: any) => c.code === '19-28-02-003')).toMatchObject({ counting: 1, ballots: 9 });
+    await http.get(api('/live-counts/summary')).set(as(WARD)).query({ area: '19' }).expect(403);
+    await http.get(api('/live-counts/summary')).set(as(AGENT3)).expect(403);
+    expect((await http.get(api('/live-counts/summary')).set(as('adminB')).query({ area: '19' }).expect(200)).body.votes).toEqual({});
+
+    // Finishing also stores the unit's quick count for the sample estimate
+    expect((await send(5, { APC: 6, PDP: 2, LP: 1 }, 1, true).expect(200)).body.status).toBe('done');
+    const [qt] = await ds.query(`select votes from public.quick_tallies where pu_code = '19-28-02-003' and tenant_id = $1 order by at desc limit 1`, [T_A]);
+    expect(qt.votes).toEqual({ APC: 6, PDP: 2, LP: 1 });
+    expect((await http.get(api('/live-counts/summary')).set(as(SUP)).expect(200)).body).toMatchObject({ done: 1, counting: 0 });
   });
 
   it('two admins are needed for a top-up batch', async () => {

@@ -11,9 +11,13 @@ export function lagosMinutes(now = new Date()): number {
 }
 const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
+/** Africa's Talking voice has no sandbox: outreach calls need the live app and a voice number. */
+export function voiceConfigured(): boolean {
+  return config.at.username !== 'sandbox' && !!config.at.apiKey && !!config.at.voiceNumber;
+}
+
 async function makeCall(to: string, clientRequestId: string): Promise<string> {
-  const base = config.at.username === 'sandbox' ? 'https://voice.sandbox.africastalking.com' : 'https://voice.africastalking.com';
-  const res = await fetch(`${base}/call`, {
+  const res = await fetch('https://voice.africastalking.com/call', {
     method: 'POST',
     headers: { apiKey: config.at.apiKey, Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ username: config.at.username, from: config.at.voiceNumber, to, clientRequestId }),
@@ -26,6 +30,11 @@ async function makeCall(to: string, clientRequestId: string): Promise<string> {
 
 /** Called about once a minute (one worker at a time). */
 export async function dialCampaigns(): Promise<number> {
+  if (!voiceConfigured()) {
+    const [running] = await q(`select 1 from public.voice_campaigns where status = 'running' limit 1`);
+    if (running) log('voice', "campaigns are running but no calls are placed: set the live AT_USERNAME, AT_API_KEY and AT_VOICE_NUMBER (Africa's Talking voice has no sandbox)");
+    return 0;
+  }
   const today = new Date(Date.now() + 3600_000).toISOString().slice(0, 10);
   const camps = await q(`select * from public.voice_campaigns where status = 'running' and starts_on <= $1 and ends_on >= $1`, [today]);
   const nowMin = lagosMinutes();

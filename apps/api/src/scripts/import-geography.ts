@@ -14,6 +14,13 @@ void withDb(async (q) => {
   for (const s of states.filter((x) => (stateFilter ? stateFilter.includes(x.code) : x.is_north))) {
     const lgas = await lgasOfState(irevElection, s.irev_state_no);
     if (!lgas.length) { log('geo', `no LGAs for ${s.name} (IReV ${s.irev_state_no}); check irev_state_no`); continue; }
+    // Safety: IReV must have returned this state (its unit codes start with our state code); otherwise save nothing
+    const sampleWard = lgas.find((l) => l.wards.length)?.wards[0];
+    const sample = sampleWard ? (await unitsOfWard(irevElection, sampleWard._id))[0] : undefined;
+    if (sample && !puCodeFromIrev(sample.pu_code).startsWith(s.code + '-')) {
+      log('geo', `IReV ${s.irev_state_no} is not ${s.name} (unit ${sample.pu_code}); skipped. Check states.irev_state_no`);
+      continue;
+    }
     let unitCount = 0;
     for (const l of lgas) {
       const lgaCode = `${s.code}-${String(l.lga.code).padStart(2, '0')}`;

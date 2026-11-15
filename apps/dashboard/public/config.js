@@ -9,4 +9,7 @@ window.RUMFA_CONFIG = {
   brand: 'ALAWA',
   // Africa's Talking WebRTC client script; without it, calls ring the operator's own phone first (bridged).
   atWebrtcScript: '',
+  // Background map for the situation map. OpenStreetMap's free tiles by default (fine for a small team;
+  // for heavy use run your own tile server or use a provider). Set url to '' for outlines only, no background.
+  mapTiles: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap contributors' },
 };

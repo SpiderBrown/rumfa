@@ -31,6 +31,7 @@ export function render(t: string, d: Record<string, any>, brand = DEFAULT_BRAND)
     case 'callback_request_sms': return { title: b, body: `${b}: ${d.name ?? 'An agent'} ${d.phone ?? ''} asked you to call back (${REASON[d.reason] ?? 'help'}). Open the app to call.` };
     case 'callback_missed': return { title: b, body: `${b}: we could not reach you. Please request a call again in the app or call your coordinator.` };
     case 'callback_missed_retry': return { title: b, body: `${b}: your coordinator tried to call you. They will try again in 5 minutes.` };
+    case 'app_call': return { title: 'Incoming call', body: `${d.name || 'Someone'} is calling you in the app. Open it to answer.` };
     case 'live_view_request': return { title: 'Live view request', body: 'The situation room asks to see your unit. Open the app to accept.' };
     case 'contact_call_failed': return { title: 'Contact unreachable', body: 'A verified contact did not answer a test call.' };
     case 'topup_sent': return { title: b, body: `${b}: ${d.kind === 'data' ? 'data' : 'airtime'} of N${d.amount} has been sent to your line for election duty.` };

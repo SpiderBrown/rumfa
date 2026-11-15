@@ -16,6 +16,8 @@ export const routes: Routes = [
       { path: '', pathMatch: 'full', redirectTo: 'room' },
       { path: 'room', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
       { path: 'room/case/:id', loadComponent: () => import('./pages/room/case-detail').then((m) => m.CaseDetailPage) },
+      { path: 'map', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/map').then((m) => m.MapPage) },
+      { path: 'live-count', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/live-count').then((m) => m.LiveCountPage) },
       { path: 'callbacks', loadComponent: () => import('./pages/callbacks').then((m) => m.CallbacksPage) },
       { path: 'results', canActivate: [roles('analyst', 'supervisor', 'admin', 'legal', 'operator')], loadComponent: () => import('./pages/results').then((m) => m.ResultsPage) },
       { path: 'irev', canActivate: [roles('analyst', 'supervisor', 'admin')], loadComponent: () => import('./pages/irev').then((m) => m.IrevPage) },

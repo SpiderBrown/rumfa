@@ -6,7 +6,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatIconModule } from '@angular/material/icon';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { Ui, label } from '../core/ui';
 
 /**
@@ -33,7 +33,7 @@ import { Ui, label } from '../core/ui';
     <ng-container matColumnDef="t"><th mat-header-cell *matHeaderCellDef>Recording</th><td mat-cell *matCellDef="let x">{{ x.speaker }} · {{ x.title }} ({{ x.language }})</td></ng-container>
     <ng-container matColumnDef="s"><th mat-header-cell *matHeaderCellDef>Status</th><td mat-cell *matCellDef="let x">{{ label(x.status) }}</td></ng-container>
     <ng-container matColumnDef="a"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let x">
-      @if (x.status === 'draft' && supa.isAdmin()) { <button mat-stroked-button (click)="approveRecording(x)">Approve</button> }</td></ng-container>
+      @if (x.status === 'draft' && api.isAdmin()) { <button mat-stroked-button (click)="approveRecording(x)">Approve</button> }</td></ng-container>
     <tr mat-header-row *matHeaderRowDef="['t','s','a']"></tr><tr mat-row *matRowDef="let row; columns: ['t','s','a']"></tr>
   </table>
 
@@ -56,7 +56,7 @@ import { Ui, label } from '../core/ui';
     <ng-container matColumnDef="s"><th mat-header-cell *matHeaderCellDef>Status</th><td mat-cell *matCellDef="let x">{{ label(x.status) }}
       @if (stats()[x.id]; as st) { <div class="hint">{{ st }}</div> }</td></ng-container>
     <ng-container matColumnDef="a"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let x">
-      @if (x.status === 'draft' && supa.isAdmin() && x.created_by !== supa.me()?.id) { <button mat-stroked-button (click)="setStatus(x, 'approved', true)">Approve</button> }
+      @if (x.status === 'draft' && api.isAdmin() && x.created_by !== api.me()?.id) { <button mat-stroked-button (click)="setStatus(x, 'approved', true)">Approve</button> }
       @if (x.status === 'approved' || x.status === 'paused') { <button mat-flat-button (click)="setStatus(x, 'running')">Start</button> }
       @if (x.status === 'running') { <button mat-stroked-button (click)="setStatus(x, 'paused')">Pause</button> }
     </td></ng-container>
@@ -68,7 +68,7 @@ import { Ui, label } from '../core/ui';
     .hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }`,
 })
 export class VoicePage {
-  supa = inject(Supa);
+  api = inject(Api);
   private ui = inject(Ui);
   label = label;
   langs = [{ code: 'ha', name: 'Hausa' }, { code: 'en', name: 'English' }, { code: 'ff', name: 'Fulfulde' }, { code: 'kr', name: 'Kanuri' }, { code: 'yo', name: 'Yoruba' }];
@@ -83,59 +83,38 @@ export class VoicePage {
   approved(lang: string) { return this.recordings().filter((x) => x.status === 'approved' && x.language === lang); }
 
   async load() {
-    const [r, c] = await Promise.all([
-      this.supa.client.from('voice_recordings').select('*').order('created_at', { ascending: false }),
-      this.supa.client.from('voice_campaigns').select('*').order('created_at', { ascending: false }),
-    ]);
-    this.recordings.set(r.data ?? []); this.campaigns.set(c.data ?? []);
-    const st: Record<string, string> = {};
-    for (const x of c.data ?? []) {
-      const { data } = await this.supa.client.from('voice_call_attempts').select('status').eq('campaign_id', x.id).limit(100000);
-      if (!data?.length) continue;
-      const k: Record<string, number> = {};
-      for (const a of data) k[a.status] = (k[a.status] ?? 0) + 1;
-      st[x.id] = Object.entries(k).map(([s, n]) => `${label(s)} ${n.toLocaleString()}`).join(' · ');
-    }
-    this.stats.set(st);
+    const [r, c] = await Promise.all([this.api.get<any[]>('/voice/recordings'), this.api.get<any[]>('/voice/campaigns')]).catch((e) => { this.ui.error(e); return [[], []]; });
+    this.recordings.set(r); this.campaigns.set(c);
+    this.stats.set(Object.fromEntries(c.filter((x: any) => x.counts).map((x: any) =>
+      [x.id, Object.entries(x.counts as Record<string, number>).map(([s, n]) => `${label(s)} ${Number(n).toLocaleString()}`).join(' · ')])));
   }
 
   async upload() {
-    const me = this.supa.me()!;
     if (!this.r.speaker || !this.r.title || !this.r.audio || !this.r.consent) { this.ui.error('Speaker, title, audio and the signed release are required'); return; }
     await this.ui.run(async () => {
-      const base = `${me.tenant_id}/${crypto.randomUUID()}`;
-      const a = await this.supa.client.storage.from('voice-recordings').upload(`${base}.${this.r.audio!.name.split('.').pop()}`, this.r.audio!);
-      if (a.error) throw a.error;
-      const k = await this.supa.client.storage.from('voice-recordings').upload(`${base}-release.${this.r.consent!.name.split('.').pop()}`, this.r.consent!);
-      if (k.error) throw k.error;
-      const { error } = await this.supa.client.from('voice_recordings').insert({ tenant_id: me.tenant_id, speaker: this.r.speaker, title: this.r.title,
-        language: this.r.language, storage_path: a.data.path, consent_doc_path: k.data.path });
-      if (error) throw error;
+      const ext = (f: File) => (f.name.split('.').pop() ?? '').toLowerCase();
+      const audio = await this.api.upload('voice_recording', this.r.audio!, ext(this.r.audio!));
+      const release = await this.api.upload('voice_consent', this.r.consent!, ext(this.r.consent!));
+      await this.api.post('/voice/recordings', { speaker: this.r.speaker, title: this.r.title, language: this.r.language, storagePath: audio, consentDocPath: release });
     }, 'Uploaded; an admin must approve it');
     await this.load();
   }
 
   async approveRecording(x: any) {
     if (!(await this.ui.confirm('Approve recording', `Confirm the signed release from ${x.speaker} covers this message.`, 'Approve'))) return;
-    const { error } = await this.supa.client.from('voice_recordings').update({ status: 'approved', approved_by: this.supa.me()!.id, approved_at: new Date().toISOString() }).eq('id', x.id);
-    if (error) this.ui.error(error.message); else await this.load();
+    if (await this.ui.run(() => this.api.post(`/voice/recordings/${x.id}/approve`))) await this.load();
   }
 
   async createCampaign() {
     const recs = Object.fromEntries(Object.entries(this.c.rec).filter(([, v]) => v));
     if (!this.c.name || !Object.keys(recs).length || !this.c.from || !this.c.to) { this.ui.error('Name, dates and at least one recording are required'); return; }
-    const { error } = await this.supa.client.from('voice_campaigns').insert({
-      tenant_id: this.supa.me()!.tenant_id, name: this.c.name, recordings: recs,
+    const ok = await this.ui.run(() => this.api.post('/voice/campaigns', { name: this.c.name, recordings: recs,
       audience: { states: this.c.states.split(',').map((s) => s.trim()).filter(Boolean), languages: Object.keys(recs) },
-      starts_on: this.c.from, ends_on: this.c.to, calls_per_minute: this.c.cpm, created_by: this.supa.me()!.id,
-    });
-    if (error) this.ui.error(error.message); else { this.ui.toast('Draft saved; another admin must approve it'); await this.load(); }
+      startsOn: this.c.from, endsOn: this.c.to, callsPerMinute: Number(this.c.cpm) }), 'Draft saved; another admin must approve it');
+    if (ok) await this.load();
   }
 
-  async setStatus(x: any, status: string, approving = false) {
-    const patch: Record<string, unknown> = { status };
-    if (approving) patch['approved_by'] = this.supa.me()!.id;
-    const { error } = await this.supa.client.from('voice_campaigns').update(patch).eq('id', x.id);
-    if (error) this.ui.error(error.message); else await this.load();
+  async setStatus(x: any, status: string, _approving = false) {
+    if (await this.ui.run(() => this.api.post(`/voice/campaigns/${x.id}/status`, { status }))) await this.load();
   }
 }

@@ -1,8 +1,7 @@
 import { Component, OnDestroy, inject, signal } from '@angular/core';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonTitle, IonToolbar } from '@ionic/angular';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { CALLBACK_REASONS } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -26,21 +25,19 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class CallbackPage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
   private ui = inject(Ui);
   t = inject(I18n).t;
   reasons = CALLBACK_REASONS;
   open = signal<any | null>(null);
-  private rt: RealtimeChannel;
+  private stopLive: () => void;
 
   constructor() {
     void this.load();
-    this.rt = this.supa.client.channel('my-callback')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'callback_requests', filter: `requester_id=eq.${this.supa.me()!.id}` }, () => void this.load())
-      .subscribe();
+    this.stopLive = this.api.onChange(() => void this.load(), ['callback_requests']);
   }
-  ngOnDestroy() { void this.supa.client.removeChannel(this.rt); }
+  ngOnDestroy() { this.stopLive(); }
 
   statusText(s: string) {
     return ({ waiting: this.t('Your coordinator will call you'), escalated: 'Passed to the situation room; they will call you',
@@ -48,9 +45,8 @@ export default class CallbackPage implements OnDestroy {
   }
 
   async load() {
-    const { data } = await this.supa.client.from('callback_requests').select('*').eq('requester_id', this.supa.me()!.id)
-      .in('status', ['waiting', 'calling', 'no_answer', 'escalated']).maybeSingle();
-    this.open.set(data);
+    const r = await this.api.get<any>('/callbacks/mine').catch(() => undefined);
+    if (r !== undefined) this.open.set(r && r.id ? r : null);
   }
 
   async ask(reason: string) {
@@ -59,5 +55,5 @@ export default class CallbackPage implements OnDestroy {
     setTimeout(() => void this.load(), 1500);
   }
 
-  async cancel(id: string) { await this.supa.rpc('cancel_callback', { p_id: id }).catch((e) => this.ui.error(e)); await this.load(); }
+  async cancel(id: string) { await this.api.post(`/callbacks/${id}/cancel`).catch((e) => this.ui.error(e)); await this.load(); }
 }

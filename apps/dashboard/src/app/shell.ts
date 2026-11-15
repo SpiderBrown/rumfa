@@ -7,7 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Supa } from './core/supabase';
+import { Api } from './core/api';
 import { Calls } from './core/calls';
 import { Ui, label } from './core/ui';
 
@@ -33,7 +33,7 @@ const NAV: NavItem[] = [
   template: `
   <mat-sidenav-container class="shell">
     <mat-sidenav mode="side" opened class="nav">
-      <div class="brand"><mat-icon>shield</mat-icon><span>{{ supa.brand() }}</span></div>
+      <div class="brand"><mat-icon>shield</mat-icon><span>{{ api.brand() }}</span></div>
       <mat-nav-list>
         @for (n of nav(); track n.path) {
           <a mat-list-item [routerLink]="n.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: n.path === '/irev' }">
@@ -44,13 +44,13 @@ const NAV: NavItem[] = [
     </mat-sidenav>
     <mat-sidenav-content>
       <mat-toolbar class="top">
-        <span class="who">{{ supa.me()?.full_name }} · {{ label(supa.me()?.role) }} · {{ supa.me()?.area_code }}</span>
+        <span class="who">{{ api.me()?.full_name }} · {{ label(api.me()?.role) }} · {{ api.me()?.area_code }}</span>
         <span class="spacer"></span>
         @if (calls.active(); as c) {
           <span class="oncall"><mat-icon>call</mat-icon> On call with {{ c.label }} ({{ c.via === 'browser' ? 'headset' : 'your phone' }})</span>
           <button mat-stroked-button (click)="calls.hangup()">Hang up</button>
         }
-        @if (supa.isRoom()) {
+        @if (api.isRoom()) {
           <mat-button-toggle-group [value]="status()" (change)="setStatus($event.value)" hideSingleSelectionIndicator>
             <mat-button-toggle value="available">Available</mat-button-toggle>
             <mat-button-toggle value="away">Away</mat-button-toggle>
@@ -75,27 +75,26 @@ const NAV: NavItem[] = [
   `,
 })
 export class Shell {
-  supa = inject(Supa);
+  api = inject(Api);
   calls = inject(Calls);
   private ui = inject(Ui);
   private router = inject(Router);
   label = label;
   status = signal('offline');
-  nav = computed(() => NAV.filter((n) => !n.roles || n.roles.includes(this.supa.me()?.role ?? '')));
+  nav = computed(() => NAV.filter((n) => !n.roles || n.roles.includes(this.api.me()?.role ?? '')));
 
   constructor() {
-    void this.supa.client.from('staff_status').select('status').eq('volunteer_id', this.supa.me()?.id ?? '').maybeSingle()
-      .then(({ data }) => data && this.status.set(data.status));
+    const s = this.api.staffStatus();
+    if (s) this.status.set(s);
   }
 
   async setStatus(s: string) {
-    await this.ui.run(() => this.supa.rpc('set_my_status', { p_status: s }));
+    await this.ui.run(() => this.api.put('/me/status', { status: s }));
     this.status.set(s);
   }
 
   async signOut() {
-    if (this.supa.isRoom()) await this.supa.rpc('set_my_status', { p_status: 'offline' }).catch(() => {});
-    await this.supa.client.auth.signOut();
+    await this.api.signOut();
     await this.router.navigateByUrl('/login');
   }
 }

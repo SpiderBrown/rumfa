@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 import { Geolocation } from '@capacitor/geolocation';
 import { IonBadge, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonRefresher,
   IonRefresherContent, IonTitle, IonToolbar } from '@ionic/angular';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox, type OutItem } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -19,7 +19,7 @@ import { Ui } from '../core/ui';
   </ion-toolbar></ion-header>
   <ion-content>
     <ion-refresher slot="fixed" (ionRefresh)="refresh($event)"><ion-refresher-content /></ion-refresher>
-    <div class="who">{{ me()?.full_name }} · {{ me()?.area_code }}
+    <div class="who"><b>{{ api.brand() }}</b> · {{ me()?.full_name }} · {{ me()?.area_code }}
       @if (!outbox.online()) { <span class="off">{{ t('No internet') }}</span> }</div>
 
     <div class="big-grid">
@@ -29,11 +29,11 @@ import { Ui } from '../core/ui';
         <a class="tile" routerLink="/report"><ion-icon name="warning" />{{ t('Report a problem') }}</a>
         <a class="tile sos" routerLink="/report" [queryParams]="{ sos: 1 }"><ion-icon name="alert-circle" />{{ t('SOS') }}</a>
         <a class="tile" routerLink="/quick"><ion-icon name="speedometer" />{{ t('Quick count') }}</a>
-        @if (supa.isAgent()) { <a class="tile" routerLink="/result"><ion-icon name="document-text" />{{ t('Submit result (EC8A)') }}</a> }
+        @if (api.isAgent()) { <a class="tile" routerLink="/result"><ion-icon name="document-text" />{{ t('Submit result (EC8A)') }}</a> }
       }
       <a class="tile" routerLink="/callback"><ion-icon name="call" />{{ t('Ask my coordinator to call me') }}</a>
       <a class="tile" routerLink="/messages"><ion-icon name="chatbubbles" />{{ t('Messages') }}</a>
-      @if (supa.isCoordinator()) {
+      @if (api.isCoordinator()) {
         <a class="tile" routerLink="/coord/callbacks"><ion-icon name="call-outline" />{{ t('Callback requests') }}</a>
         <a class="tile" routerLink="/coord/team"><ion-icon name="people" />{{ t('My team') }}</a>
         <a class="tile" routerLink="/coord/contact"><ion-icon name="shield-checkmark" />{{ t('Add authority contact') }}</a>
@@ -58,12 +58,12 @@ import { Ui } from '../core/ui';
            button.tile { border: none; font-family: inherit; font-size: inherit; cursor: pointer; } a.tile { text-decoration: none; }`,
 })
 export default class HomePage {
-  supa = inject(Supa);
+  api = inject(Api);
   outbox = inject(Outbox);
   private ui = inject(Ui);
   t = inject(I18n).t;
-  me = this.supa.me;
-  atUnit = this.supa.atUnit;
+  me = this.api.me;
+  atUnit = this.api.atUnit;
   checkedIn = signal(!!localStorage.getItem('rumfa.checkin.' + new Date().toDateString()));
   private tick = signal(0);
 
@@ -77,7 +77,7 @@ export default class HomePage {
     return this.outbox.online() ? 'Sending…' : 'Saved on this phone; will send when there is internet';
   };
 
-  async refresh(ev: CustomEvent) { await this.outbox.sync(); await this.supa.refreshMe().catch(() => {}); (ev.target as any).complete(); }
+  async refresh(ev: CustomEvent) { await this.outbox.sync(); await this.api.refreshMe().catch(() => {}); (ev.target as any).complete(); }
 
   async checkIn() {
     let pos: { lat?: number; lng?: number; accuracy?: number } = {};

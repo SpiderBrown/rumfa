@@ -35,7 +35,7 @@ Migration status:
 | Webhooks: SMS fallback, voice, WhatsApp, VTpass, LiveKit | Done (`/api/v1/webhooks/...`); Edge Functions removed |
 | Live updates: Socket.IO at `/live`, fed by Postgres `NOTIFY` (works across API instances, no Redis) | Done |
 | Worker as a second NestJS entry point (`node dist/worker.main`), all jobs on SQL | Done; `worker/` removed |
-| Apps switched from the Supabase client to the API | Not yet: **the apps do not work until this is done** |
+| Both apps switched from the Supabase client to the API and live updates | Done |
 
 ## Layout
 
@@ -105,13 +105,18 @@ The worker and scripts use the API's `.env`. The first tenant (with `settings.br
 
 ## Run the apps
 
-Set `public/config.js` in each app (Supabase URL, anon key; for the agent app also the SMS number).
+Each app has a `public/config.js` with no secrets; it only says where the API is.
+
+- **Rumfa Room** (`apps/dashboard`): `apiUrl`, the `tenantId` of the client this site belongs to, and its `brand`. Host the same build on each client's domain with its own `config.js`. Staff sign in with email + password (+ authenticator code where required); admins send invite links from the People page.
+- **Rumfa Agent** (`apps/agent`): `apiUrl`, the SMS fallback number and the helpline. One app for every client: a phone is activated once (SMS code, WhatsApp code, or a coordinator's activation code from the People or My team page) and then opened with the 6-digit PIN; people working for several clients pick one, and can switch from Help.
 
 ```bash
 cd apps/dashboard && npm install && npm start          # http://localhost:4200
 cd apps/agent && npm install && npm start              # browser preview
 cd apps/agent && npx cap add android && npm run android   # Android build
 ```
+
+For a local run, start the API with `OTP_MODE=fixed` and `STORAGE_DRIVER=local` (the `api-dev` entry in `.claude/launch.json` does this against a `rumfa_dev` database), load `db/seed.sql`, and give a staff member an email and password (or an invite) to use the dashboard.
 
 ## What is verified and what is not
 
@@ -120,6 +125,7 @@ Verified here:
 - 20 groups of database scenario tests pass (merging, routing, auto-assignment by language, acknowledgement and resolution escalation, supervisor merge and undo, three-source mismatch alerts, callback escalation chain, contact approval rules, two-admin top-up approval, row-level security, service-only functions, dashboard read APIs, two clients sharing one person, and the lockdown of credentials and Supabase's roles).
 - Shared and worker unit tests pass, including the SMS codec and duplicate detection on real 2023 IReV sheets (units 19-28-02-003 and 19-28-02-005 carry the same photo).
 - The API and the worker build and start on an empty database (the API applies all migrations).
+- Both apps build, and were run end to end against the API: a phone activated with a code and a new PIN, a check-in and an incident report sent from the agent app, the case auto-assigned and shown in the dashboard (supervisor signed in with email and password), and a second report from the phone merged into the open case and appearing on the dashboard's case page without a reload.
 
 Not yet verified (needs real accounts or a Supabase project):
 - The API against a live Supabase project (Session pooler, Storage signed links).

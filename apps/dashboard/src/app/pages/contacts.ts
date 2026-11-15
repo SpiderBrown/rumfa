@@ -9,7 +9,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { normaliseNgPhone } from '@rumfa/shared';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { Calls } from '../core/calls';
 import { AgoPipe, Ui, label } from '../core/ui';
 
@@ -38,7 +38,7 @@ import { AgoPipe, Ui, label } from '../core/ui';
       <mat-form-field><mat-label>Phone</mat-label><input matInput [(ngModel)]="n.phone" /></mat-form-field>
       <mat-form-field><mat-label>Level</mat-label><mat-select [(ngModel)]="n.level">
         @for (l of ['ward','lga','state']; track l) { <mat-option [value]="l">{{ l }}</mat-option> }</mat-select></mat-form-field>
-      <mat-form-field><mat-label>Area code</mat-label><input matInput [(ngModel)]="n.area" [placeholder]="supa.me()?.area_code ?? ''" /></mat-form-field>
+      <mat-form-field><mat-label>Area code</mat-label><input matInput [(ngModel)]="n.area" [placeholder]="api.me()?.area_code ?? ''" /></mat-form-field>
       <button mat-flat-button (click)="add()">Save</button>
     </div>
   }
@@ -59,7 +59,7 @@ import { AgoPipe, Ui, label } from '../core/ui';
         @if (k.phone) { <button mat-icon-button matTooltip="Test call" (click)="testCall(k)"><mat-icon>call</mat-icon></button> }
         @if (k.phone && ['pending','stale','call_tested'].includes(k.status)) {
           <button mat-button (click)="markCall(k, true)">Answered</button><button mat-button (click)="markCall(k, false)">No answer</button> }
-        @if (k.status === 'call_tested' && k.added_by !== supa.me()?.id) {
+        @if (k.status === 'call_tested' && k.added_by !== api.me()?.id) {
           <button mat-stroked-button (click)="approve(k, true)">Approve</button><button mat-button (click)="approve(k, false)">Reject</button> }
       </td></ng-container>
     <tr mat-header-row *matHeaderRowDef="cols"></tr>
@@ -71,7 +71,7 @@ import { AgoPipe, Ui, label } from '../core/ui';
     .src { padding: 2px 8px; border-radius: 8px; font-size: 12px; } .src.official { background: #e3f2e1; } .src.liaison { background: #e7f1fb; } .src.coordinator { background: #f9eeda; }`,
 })
 export class ContactsPage {
-  supa = inject(Supa);
+  api = inject(Api);
   private ui = inject(Ui);
   private calls = inject(Calls);
   label = label;
@@ -83,7 +83,7 @@ export class ContactsPage {
   statusFilter: 'all' | 'todo' | 'verified' = 'todo';
   adding = signal(false);
   n = { agency: 'Police', title: '', person: '', phone: '', level: 'ward', area: '' };
-  canAdd = computed(() => ['coordinator', 'supervisor', 'admin'].includes(this.supa.me()?.role ?? ''));
+  canAdd = computed(() => ['coordinator', 'supervisor', 'admin'].includes(this.api.me()?.role ?? ''));
   rows = computed(() => {
     const f = this.filter().toLowerCase();
     return this.all().filter((k) => !f || k.area_code.startsWith(f) || `${k.agency} ${k.title} ${k.person_name ?? ''}`.toLowerCase().includes(f));
@@ -92,22 +92,19 @@ export class ContactsPage {
   constructor() { void this.load(); }
 
   async load() {
-    let q = this.supa.client.from('authority_contacts').select('*').order('area_code').limit(2000);
-    if (this.statusFilter === 'todo') q = q.in('status', ['pending', 'call_tested', 'stale']);
-    if (this.statusFilter === 'verified') q = q.eq('status', 'verified');
-    const { data, error } = await q;
-    if (error) this.ui.error(error.message); else this.all.set(data ?? []);
+    const status = this.statusFilter === 'todo' ? 'pending,call_tested,stale' : this.statusFilter === 'verified' ? 'verified' : undefined;
+    try { this.all.set(await this.api.get<any[]>('/contacts', { status })); } catch (e) { this.ui.error(e); }
   }
 
   async add() {
     const phone = normaliseNgPhone(this.n.phone);
     if (!phone || !this.n.title || !this.n.area) { this.ui.error('Title, a valid phone and area code are required'); return; }
-    await this.ui.run(() => this.supa.rpc('add_authority_contact', { p_agency: this.n.agency, p_title: this.n.title, p_person: this.n.person || null,
-      p_phone: phone, p_level: this.n.level, p_area: this.n.area }), 'Saved. Now make a test call.');
+    await this.ui.run(() => this.api.post('/contacts', { agency: this.n.agency, title: this.n.title, person: this.n.person || undefined,
+      phone, level: this.n.level, areaCode: this.n.area }), 'Saved. Now make a test call.');
     this.adding.set(false); this.statusFilter = 'todo'; await this.load();
   }
 
   testCall(k: any) { void this.calls.call('contact', k.id, `${k.agency} ${k.title}`, undefined, 'Test call'); }
-  async markCall(k: any, ok: boolean) { await this.ui.run(() => this.supa.rpc('mark_contact_call', { p_contact: k.id, p_ok: ok }), ok ? 'Marked as reached' : 'Marked unreachable'); await this.load(); }
-  async approve(k: any, ok: boolean) { await this.ui.run(() => this.supa.rpc('approve_contact', { p_contact: k.id, p_approve: ok }), ok ? 'Approved' : 'Rejected'); await this.load(); }
+  async markCall(k: any, ok: boolean) { await this.ui.run(() => this.api.post(`/contacts/${k.id}/call-result`, { ok }), ok ? 'Marked as reached' : 'Marked unreachable'); await this.load(); }
+  async approve(k: any, ok: boolean) { await this.ui.run(() => this.api.post(`/contacts/${k.id}/approve`, { approve: ok }), ok ? 'Approved' : 'Rejected'); await this.load(); }
 }

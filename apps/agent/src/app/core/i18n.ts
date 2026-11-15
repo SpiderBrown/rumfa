@@ -6,7 +6,12 @@ const DICT: Record<string, Record<string, string>> = {
   en: {},
   ha: {
     'Sign in': 'Shiga', 'Phone number': 'Lambar waya', 'Send code': 'Aika lamba', 'Enter the code we sent by SMS': 'Shigar da lambar da muka aiko ta SMS',
-    'Create a 4-digit PIN': 'Ƙirƙiri PIN mai lamba 4', 'Enter your PIN': 'Shigar da PIN ɗinka', 'Continue': 'Ci gaba',
+    'Create a 6-digit PIN': 'Ƙirƙiri PIN mai lamba 6', 'Repeat the PIN': 'Maimaita PIN',
+    'Send code by WhatsApp': 'Aika lamba ta WhatsApp', 'I have an activation code': 'Ina da lambar kunnawa',
+    'Enter the activation code from your coordinator': 'Shigar da lambar kunnawa daga mai kula da kai', 'Code': 'Lamba',
+    'You will use this PIN every time you open the app.': 'Za ka yi amfani da wannan PIN duk lokacin da ka buɗe manhajar.',
+    'Use another number': 'Yi amfani da wata lamba', 'Forgot PIN? Activate this phone again': 'Ka manta PIN? Sake kunna wannan waya',
+    'Which organisation are you working for?': 'Wace ƙungiya kake yi wa aiki?', 'Switch organisation': 'Canja ƙungiya', 'Enter your PIN': 'Shigar da PIN ɗinka', 'Continue': 'Ci gaba',
     'Today': 'Yau', 'Check in': 'Shiga rumfa', 'Checklist': 'Jerin abubuwa', 'Report a problem': 'Bayar da rahoton matsala',
     'SOS': 'Gaggawa', 'Quick count': 'Ƙidaya cikin sauri', 'Submit result (EC8A)': 'Aika sakamako (EC8A)',
     'Ask my coordinator to call me': 'A ce mai kula ya kira ni', 'Messages': 'Saƙonni', 'Help': 'Taimako',

@@ -27,15 +27,17 @@ export class CasesController {
 
   /** Cases the caller may see (the database decides by role and area). */
   @Get('cases')
-  list(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('queue') queue?: string, @Query('mine') mine?: string) {
+  list(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('queue') queue?: string, @Query('mine') mine?: string,
+       @Query('sinceHours') sinceHours?: string) {
     return this.db.asUser(user, (q) => q(
       `select * from public.cases
         where tenant_id = $1
           and ($2::text is null or status = any(string_to_array($2, ',')))
           and ($3::uuid is null or queue_id = $3)
           and ($4::boolean is not true or assigned_to = $5)
+          and ($6::int is null or updated_at >= now() - make_interval(hours => $6))
         order by created_at desc limit 500`,
-      [user.tid, status || null, queue || null, mine === 'true', user.mid]));
+      [user.tid, status || null, queue || null, mine === 'true', user.mid, sinceHours ? Number(sinceHours) : null]));
   }
 
   @Get('queues/counts') @Roles(...ROOM)

@@ -5,7 +5,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { checkResult } from '@rumfa/shared';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
 /** Review queue: sheets whose figures OCR could not read confidently. Staff type them while viewing the image. */
@@ -45,7 +45,7 @@ import { Ui } from '../core/ui';
     .acts { display: flex; gap: 8px; margin-top: 12px; } .bad { color: #b3261e; } input.low { background: #fff4e5; }`,
 })
 export class IrevReviewPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   headerFields = [
     { key: 'registered', label: 'Voters on the register' }, { key: 'accredited', label: 'Accredited voters' },
@@ -63,9 +63,9 @@ export class IrevReviewPage {
   constructor() { void this.load(); }
 
   async load() {
-    const { data } = await this.supa.client.from('irev_sheet_results').select('*').eq('ocr_status', 'needs_review')
-      .order('created_at').limit(100);
-    this.queue.set(data ?? []);
+    const elections = [this.api.liveElectionId(), this.api.baselineElectionId()].filter(Boolean) as string[];
+    const lists = await Promise.all(elections.map((e) => this.api.get<any[]>('/irev/review', { election: e }).catch(() => [])));
+    this.queue.set(lists.flat().slice(0, 100));
     this.idx.set(0);
     await this.show();
   }
@@ -76,12 +76,11 @@ export class IrevReviewPage {
     const s = this.cur();
     this.imgUrl.set(null);
     if (!s) return;
-    const { data: ps } = await this.supa.client.from('election_parties').select('party').eq('election_id', s.election_id).order('ballot_order');
-    this.parties.set((ps ?? []).map((p) => p.party));
+    this.parties.set(await this.api.get<string[]>(`/elections/${s.election_id}/parties`).catch(() => []));
     this.form = { registered: s.registered, accredited: s.accredited, rejected: s.rejected, total_valid: s.total_valid };
     this.votes = Object.fromEntries(this.parties().map((p) => [p, s.votes?.[p] ?? 0]));
     this.issues.set([]);
-    this.imgUrl.set(await this.supa.signedUrl({ kind: 'irev', election_id: s.election_id, pu_code: s.pu_code }).catch(() => null));
+    this.imgUrl.set(await this.api.viewUrl({ kind: 'irev', electionId: s.election_id, pu: s.pu_code }).catch(() => null));
   }
 
   async confirm() {
@@ -91,10 +90,10 @@ export class IrevReviewPage {
     const issues = checkResult(f);
     this.issues.set(issues);
     if (issues.length && !(await this.ui.confirm('Figures do not add up', issues.map((i) => i.message).join(' '), 'Save as the sheet shows'))) return;
-    const ok = await this.ui.run(() => this.supa.rpc('confirm_irev_sheet', {
-      p_election: s.election_id, p_pu: s.pu_code, p_version: s.sheet_version, p_registered: f.registered, p_accredited: f.accredited,
-      p_rejected: f.rejected, p_total_valid: f.totalValid, p_votes: f.votes }), 'Confirmed');
-    if (ok !== undefined) { this.queue.set(this.queue().filter((x) => x !== s)); await this.show(); }
+    const ok = await this.ui.run(async () => { await this.api.post('/irev/sheets/confirm', {
+      electionId: s.election_id, pu: s.pu_code, version: s.sheet_version, registered: f.registered, accredited: f.accredited,
+      rejected: f.rejected, totalValid: f.totalValid, votes: f.votes }); return true; }, 'Confirmed');
+    if (ok) { this.queue.set(this.queue().filter((x) => x !== s)); await this.show(); }
   }
 
   async skip() { this.idx.set((this.idx() + 1) % Math.max(1, this.queue().length)); await this.show(); }

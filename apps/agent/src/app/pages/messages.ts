@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { IonBackButton, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonTitle, IonToolbar } from '@ionic/angular';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 
 /** Channels: my ward, LGA and state teams, cases I reported, and direct messages. */
@@ -23,7 +23,7 @@ import { I18n } from '../core/i18n';
   </ion-content>`,
 })
 export default class MessagesPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   t = inject(I18n).t;
   area = signal<any[]>([]);
   others = signal<any[]>([]);
@@ -31,9 +31,9 @@ export default class MessagesPage {
   constructor() { void this.load(); }
 
   async load() {
-    const a = await this.supa.rpc<any[]>('my_area_channels').catch(() => []);
+    const a = await this.api.get<any[]>('/channels/area').catch(() => []);
     this.area.set(a.sort((x, y) => (y.area_code?.length ?? 0) - (x.area_code?.length ?? 0)));
-    const { data } = await this.supa.client.from('channels').select('*').in('kind', ['case', 'direct']).order('created_at', { ascending: false }).limit(50);
-    this.others.set(data ?? []);
+    const all = await this.api.get<any[]>('/channels').catch(() => []);
+    this.others.set(all.filter((c) => ['case', 'direct'].includes(c.kind)).slice(0, 50));
   }
 }

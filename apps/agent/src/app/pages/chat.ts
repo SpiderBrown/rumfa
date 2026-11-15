@@ -1,8 +1,7 @@
 import { Component, OnDestroy, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonTitle, IonToolbar } from '@ionic/angular';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { takePhoto } from '../core/photo';
 
@@ -34,41 +33,34 @@ import { takePhoto } from '../core/photo';
 })
 export default class ChatPage implements OnDestroy {
   id = input.required<string>();
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
-  me = this.supa.me()!.id;
+  me = this.api.me()!.id;
   name = signal('');
   messages = signal<any[]>([]);
   names = signal<Record<string, string>>({});
   queued = () => this.outbox.pending().filter((i) => i.kind === 'message' && i.payload['channel'] === this.id());
   draft = '';
-  private rt?: RealtimeChannel;
+  private stopLive: () => void = () => undefined;
+  private unfollow: () => void = () => undefined;
 
   constructor() {
     effect(() => {
       const id = this.id();
       void this.load(id);
-      this.rt?.unsubscribe();
-      this.rt = this.supa.client.channel(`chat-${id}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${id}` },
-          (p) => this.messages.set([...this.messages(), p.new]))
-        .subscribe();
+      this.stopLive(); this.unfollow();
+      this.unfollow = this.api.follow({ channel: id });
+      this.stopLive = this.api.onChange((c) => { if (c.channel_id === id) void this.load(id); }, ['messages']);
     });
   }
-  ngOnDestroy() { this.rt?.unsubscribe(); }
+  ngOnDestroy() { this.stopLive(); this.unfollow(); }
 
   async load(id: string) {
-    const [{ data: ch }, { data: msgs }] = await Promise.all([
-      this.supa.client.from('channels').select('name').eq('id', id).maybeSingle(),
-      this.supa.client.from('messages').select('*').eq('channel_id', id).order('created_at').limit(200),
-    ]);
-    this.name.set(ch?.name ?? '');
-    this.messages.set(msgs ?? []);
-    const ids = [...new Set((msgs ?? []).map((m) => m.sender_id).filter(Boolean))];
-    if (ids.length) {
-      const { data } = await this.supa.client.from('volunteers').select('id, full_name').in('id', ids);
-      this.names.set(Object.fromEntries((data ?? []).map((v) => [v.id, v.full_name])));
-    }
+    const d = await this.api.get<{ channel: any; messages: any[] }>(`/channels/${id}`).catch(() => null);
+    if (!d) return;
+    this.name.set(d.channel.name ?? '');
+    this.messages.set(d.messages);
+    this.names.set(Object.fromEntries(d.messages.filter((m) => m.sender_id).map((m) => [m.sender_id, m.sender_name ?? ''])));
   }
 
   time(t: string) { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }

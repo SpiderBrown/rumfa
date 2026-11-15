@@ -5,9 +5,8 @@ import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { FormsModule } from '@angular/forms';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { CALLBACK_REASONS, INCIDENT_CATEGORIES } from '@rumfa/shared';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { AgoPipe, Ui, label } from '../core/ui';
 
 /**
@@ -53,44 +52,40 @@ import { AgoPipe, Ui, label } from '../core/ui';
            table { width: 100%; }`,
 })
 export class CallbacksPage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   label = label;
   scope: 'mine' | 'open' | 'done' = 'mine';
   rows = signal<any[]>([]);
   cols = ['who', 'reason', 'status', 'due', 'act'];
-  private rt: RealtimeChannel;
+  private stopLive: () => void;
 
   constructor() {
-    if (this.supa.isRoom()) this.scope = 'open';
+    if (this.api.isRoom()) this.scope = 'open';
     void this.load();
-    this.rt = this.supa.client.channel('callbacks')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'callback_requests' }, () => void this.load()).subscribe();
+    this.stopLive = this.api.onChange(() => void this.load(), ['callback_requests']);
   }
-  ngOnDestroy() { void this.supa.client.removeChannel(this.rt); }
+  ngOnDestroy() { this.stopLive(); }
 
   reason(code: string) { return CALLBACK_REASONS.find((r) => r.code === code)?.label ?? code; }
 
   async load() {
-    let q = this.supa.client.from('callback_requests').select('*, requester:volunteers!callback_requests_requester_id_fkey(full_name, phone, area_code)')
-      .order('due_at').limit(300);
-    if (this.scope === 'mine') q = q.eq('assigned_to', this.supa.me()!.id).in('status', ['waiting', 'calling', 'no_answer']);
-    else if (this.scope === 'open') q = q.in('status', ['waiting', 'calling', 'no_answer', 'escalated']);
-    else q = q.in('status', ['done', 'closed', 'cancelled', 'case_opened']).gte('updated_at', new Date(Date.now() - 86400_000).toISOString());
-    const { data, error } = await q;
-    if (error) this.ui.error(error.message); else this.rows.set(data ?? []);
+    const q = this.scope === 'mine' ? { mine: true, status: 'waiting,calling,no_answer' }
+      : this.scope === 'open' ? { status: 'waiting,calling,no_answer,escalated' }
+      : { status: 'done,closed,cancelled,case_opened', sinceHours: 24 };
+    try { this.rows.set(await this.api.get<any[]>('/callbacks', q)); } catch (e) { this.ui.error(e); }
   }
 
   async call(r: any) {
-    const res = await this.ui.run(() => this.supa.fn<{ bridged: boolean; dial_direct?: string }>('calls', { action: 'callback', callback_id: r.id }));
+    const res = await this.ui.run(() => this.api.post<{ bridged: boolean; dialDirect?: string }>(`/callbacks/${r.id}/call`));
     if (res?.bridged) this.ui.toast('Your phone will ring first, then the agent is connected.');
-    else if (res?.dial_direct) { this.ui.toast('Automatic call failed; dialling directly.'); window.location.href = `tel:${res.dial_direct}`; }
+    else if (res?.dialDirect) { this.ui.toast('Automatic call failed; dialling directly.'); window.location.href = `tel:${res.dialDirect}`; }
     await this.load();
   }
   async done(r: any, answered: boolean) {
     const outcome = answered ? await this.ui.prompt('Call outcome', 'What was agreed?', { multiline: true }) : null;
     if (answered && !outcome) return;
-    await this.ui.run(() => this.supa.rpc('complete_callback', { p_id: r.id, p_answered: answered, p_outcome: outcome }), 'Saved');
+    await this.ui.run(() => this.api.post(`/callbacks/${r.id}/complete`, { answered, outcome: outcome ?? undefined }), 'Saved');
     await this.load();
   }
   async toCase(r: any) {
@@ -99,11 +94,11 @@ export class CallbacksPage implements OnDestroy {
     if (!cat) return;
     const note = await this.ui.prompt('Open a case', 'What is happening?', { multiline: true });
     if (!note) return;
-    await this.ui.run(() => this.supa.rpc('convert_callback_to_case', { p_id: r.id, p_category: cat, p_note: note }), 'Case opened');
+    await this.ui.run(() => this.api.post(`/callbacks/${r.id}/convert`, { category: cat, note }), 'Case opened');
     await this.load();
   }
   async play(r: any) {
-    const url = await this.ui.run(() => this.supa.signedUrl({ kind: 'callback', callback_id: r.id }));
+    const url = await this.ui.run(() => this.api.viewUrl({ kind: 'callback', id: r.id }));
     if (url) window.open(url, '_blank', 'noopener');
   }
 }

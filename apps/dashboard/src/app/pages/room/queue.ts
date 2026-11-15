@@ -8,8 +8,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { Supa } from '../../core/supabase';
+import { Api } from '../../core/api';
 import { AgoPipe, SEVERITY_COLOR, Ui, label } from '../../core/ui';
 
 export interface CaseRow {
@@ -84,7 +83,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
   `,
 })
 export class QueuePage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   private router = inject(Router);
   label = label;
@@ -96,7 +95,7 @@ export class QueuePage implements OnDestroy {
   cases = signal<CaseRow[]>([]);
   queues = signal<QueueCount[]>([]);
   staff = signal<Record<string, string>>({});
-  private channel?: RealtimeChannel;
+  private stopLive: () => void;
   private timer = setInterval(() => { this.cases.set([...this.cases()]); void this.loadCounts(); }, 30_000);
 
   rows = computed(() => {
@@ -108,25 +107,25 @@ export class QueuePage implements OnDestroy {
   constructor() {
     void this.load();
     void this.loadCounts();
-    void this.supa.rpc<{ id: string; full_name: string }[]>('room_staff').then((s) =>
+    void this.api.get<{ id: string; full_name: string }[]>('/people/room-staff').then((s) =>
       this.staff.set(Object.fromEntries(s.map((x) => [x.id, x.full_name])))).catch(() => {});
-    this.channel = this.supa.client.channel('room-cases')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => { void this.load(); void this.loadCounts(); })
-      .subscribe();
+    // Live: any case change in my area reloads the list (a burst of changes reloads once)
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    this.stopLive = this.api.onChange(() => {
+      pending ??= setTimeout(() => { pending = null; void this.load(); void this.loadCounts(); }, 400);
+    }, ['cases']);
   }
 
-  ngOnDestroy() { clearInterval(this.timer); if (this.channel) void this.supa.client.removeChannel(this.channel); }
+  ngOnDestroy() { clearInterval(this.timer); this.stopLive(); }
 
   async load() {
-    let q = this.supa.client.from('cases').select('*').order('created_at', { ascending: false }).limit(500);
-    if (this.view === 'mine') q = q.eq('assigned_to', this.supa.me()!.id).in('status', ['assigned', 'in_progress', 'escalated', 'resolved']);
-    else if (this.view === 'open') q = q.in('status', ['queued', 'assigned', 'in_progress', 'escalated', 'resolved']);
-    else q = q.in('status', ['closed', 'merged']).gte('updated_at', new Date(Date.now() - 6 * 3600_000).toISOString());
-    const { data, error } = await q;
-    if (error) this.ui.error(error); else this.cases.set(data as CaseRow[]);
+    const q = this.view === 'mine' ? { mine: true, status: 'assigned,in_progress,escalated,resolved' }
+      : this.view === 'open' ? { status: 'queued,assigned,in_progress,escalated,resolved' }
+      : { status: 'closed,merged', sinceHours: 6 };
+    try { this.cases.set(await this.api.get<CaseRow[]>('/cases', q)); } catch (e) { this.ui.error(e); }
   }
 
-  async loadCounts() { this.queues.set(await this.supa.rpc<QueueCount[]>('queue_counts').catch(() => [])); }
+  async loadCounts() { this.queues.set(await this.api.get<QueueCount[]>('/queues/counts').catch(() => [])); }
 
   toggleQueue(id: string) { this.queueFilter.set(this.queueFilter() === id ? null : id); }
   staffName(id: string | null) { return id ? this.staff()[id] ?? '…' : '—'; }
@@ -134,7 +133,7 @@ export class QueuePage implements OnDestroy {
   open(id: string) { void this.router.navigate(['/room/case', id]); }
 
   async takeNext(queueId: string) {
-    const id = await this.ui.run(() => this.supa.rpc<string | null>('take_next_case', { p_queue: queueId }));
-    if (id) this.open(id); else if (id === null) this.ui.toast('Nothing waiting in this queue');
+    const r = await this.ui.run(() => this.api.post<{ caseId: string | null }>('/cases/next', { queueId }));
+    if (r?.caseId) this.open(r.caseId); else if (r) this.ui.toast('Nothing waiting in this queue');
   }
 }

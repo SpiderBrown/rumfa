@@ -2,7 +2,7 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonButton, IonCheckbox, IonContent, IonHeader, IonItem, IonList, IonListHeader, IonRadio, IonRadioGroup, IonTitle, IonToolbar } from '@ionic/angular';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 
@@ -13,7 +13,7 @@ import { Ui } from '../core/ui';
   template: `
   <ion-header><ion-toolbar color="primary"><ion-title>Welcome</ion-title></ion-toolbar></ion-header>
   <ion-content class="ion-padding">
-    @if (supa.me(); as me) {
+    @if (api.me(); as me) {
       <p><b>{{ me.full_name }}</b><br />{{ me.role }} · {{ me.area_code }}</p>
       <p class="hint">If these details are wrong, tell your coordinator.</p>
       <ion-list>
@@ -31,22 +31,22 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class OnboardingPage {
-  supa = inject(Supa);
+  api = inject(Api);
   private router = inject(Router);
   private ui = inject(Ui);
   t = inject(I18n).t;
   networks = [{ code: 'mtn', name: 'MTN' }, { code: 'airtel', name: 'Airtel' }, { code: 'glo', name: 'Glo' }, { code: '9mobile', name: '9mobile' }];
   langs = [{ code: 'en', name: 'English' }, { code: 'ha', name: 'Hausa' }, { code: 'ff', name: 'Fulfulde' }, { code: 'kr', name: 'Kanuri' },
     { code: 'yo', name: 'Yoruba' }, { code: 'ig', name: 'Igbo' }, { code: 'tiv', name: 'Tiv' }, { code: 'nup', name: 'Nupe' }];
-  network = this.supa.me()?.network ?? '';
-  languages = new Set(this.supa.me()?.languages ?? ['en']);
+  network = this.api.me()?.network ?? '';
+  languages = new Set(this.api.me()?.languages ?? ['en']);
 
   toggle(code: string, on: boolean) { if (on) this.languages.add(code); else this.languages.delete(code); }
 
   async save() {
     try {
-      await this.supa.rpc('complete_onboarding', { p_network: this.network, p_languages: [...this.languages] });
-      await this.supa.refreshMe();
+      await this.api.post('/me/onboarding', { network: this.network, languages: [...this.languages] });
+      await this.api.refreshMe();
       await this.router.navigateByUrl('/');
     } catch (e) { await this.ui.error(e); }
   }

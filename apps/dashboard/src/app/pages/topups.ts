@@ -7,7 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTableModule } from '@angular/material/table';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { AgoPipe, Ui, label } from '../core/ui';
 
 /** Optional airtime and data top-ups for registered people, with two-admin approval and caps. */
@@ -48,9 +48,9 @@ import { AgoPipe, Ui, label } from '../core/ui';
         @if (progress()[b.id]; as p) { <div class="hint">{{ p }}</div> }</td></ng-container>
     <ng-container matColumnDef="act"><th mat-header-cell *matHeaderCellDef></th>
       <td mat-cell *matCellDef="let b">
-        @if (b.status === 'pending_approval' && b.created_by !== supa.me()?.id) {
+        @if (b.status === 'pending_approval' && b.created_by !== api.me()?.id) {
           <button mat-flat-button (click)="approve(b, true)">Approve</button> <button mat-button (click)="approve(b, false)">Cancel</button> }
-        @if (b.status === 'pending_approval' && b.created_by === supa.me()?.id) { <span class="hint">Waiting for a second admin</span> }
+        @if (b.status === 'pending_approval' && b.created_by === api.me()?.id) { <span class="hint">Waiting for a second admin</span> }
       </td></ng-container>
     <tr mat-header-row *matHeaderRowDef="['plan','size','status','act']"></tr><tr mat-row *matRowDef="let r; columns: ['plan','size','status','act']"></tr>
   </table>`,
@@ -58,7 +58,7 @@ import { AgoPipe, Ui, label } from '../core/ui';
     .form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }`,
 })
 export class TopupsPage {
-  supa = inject(Supa);
+  api = inject(Api);
   private ui = inject(Ui);
   label = label;
   plans = signal<any[]>([]);
@@ -69,35 +69,23 @@ export class TopupsPage {
   constructor() { void this.load(); }
 
   async load() {
-    const [p, b] = await Promise.all([
-      this.supa.client.from('topup_plans').select('*').order('created_at', { ascending: false }),
-      this.supa.client.from('topup_batches').select('*, topup_plans(name)').order('created_at', { ascending: false }),
-    ]);
-    this.plans.set(p.data ?? []); this.batches.set(b.data ?? []);
-    const prog: Record<string, string> = {};
-    for (const x of (b.data ?? []).filter((x) => ['sending', 'done'].includes(x.status))) {
-      const { data } = await this.supa.client.from('topups').select('status').eq('batch_id', x.id);
-      const c: Record<string, number> = {};
-      for (const t of data ?? []) c[t.status] = (c[t.status] ?? 0) + 1;
-      prog[x.id] = Object.entries(c).map(([k, v]) => `${label(k)} ${v}`).join(' · ');
-    }
-    this.progress.set(prog);
+    const [p, b] = await Promise.all([this.api.get<any[]>('/topups/plans'), this.api.get<any[]>('/topups/batches')]).catch((e) => { this.ui.error(e); return [[], []]; });
+    this.plans.set(p); this.batches.set(b.map((x: any) => ({ ...x, topup_plans: { name: x.plan_name } })));
+    this.progress.set(Object.fromEntries(b.filter((x: any) => x.counts).map((x: any) =>
+      [x.id, Object.entries(x.counts as Record<string, number>).map(([k, v]) => `${label(k)} ${v}`).join(' · ')])));
   }
 
   async createPlan() {
     if (!this.n.name || !this.n.amount || !this.n.roles.length) { this.ui.error('Name, amount and roles are required'); return; }
-    const { error } = await this.supa.client.from('topup_plans').insert({
-      tenant_id: this.supa.me()!.tenant_id, name: this.n.name, kind: this.n.kind, amount_ngn: this.n.amount,
-      data_plan_code: this.n.kind === 'data' ? this.n.plan || null : null, target_roles: this.n.roles,
-      target_area_codes: this.n.areas.split(',').map((s) => s.trim()).filter(Boolean), onboarded_only: this.n.onboarded,
-      created_by: this.supa.me()!.id,
-    });
-    if (error) this.ui.error(error.message); else { this.ui.toast('Plan saved'); await this.load(); }
+    const ok = await this.ui.run(() => this.api.post('/topups/plans', { name: this.n.name, kind: this.n.kind, amountNgn: Number(this.n.amount),
+      dataPlanCode: this.n.kind === 'data' ? this.n.plan || undefined : undefined, targetRoles: this.n.roles,
+      targetAreaCodes: this.n.areas.split(',').map((s) => s.trim()).filter(Boolean), onboardedOnly: this.n.onboarded }), 'Plan saved');
+    if (ok) await this.load();
   }
-  async batch(p: any) { await this.ui.run(() => this.supa.rpc('create_topup_batch', { p_plan: p.id }), 'Batch created; a second admin must approve it'); await this.load(); }
+  async batch(p: any) { await this.ui.run(() => this.api.post('/topups/batches', { planId: p.id }), 'Batch created; a second admin must approve it'); await this.load(); }
   async approve(b: any, ok: boolean) {
-    if (ok && !(await this.ui.confirm('Approve top-ups', `Send ₦${b.total_ngn.toLocaleString()} to ${b.person_count} people? This spends real money.`, 'Approve and send'))) return;
-    await this.ui.run(() => this.supa.rpc('approve_topup_batch', { p_batch: b.id, p_approve: ok }), ok ? 'Approved; sending starts shortly' : 'Cancelled');
+    if (ok && !(await this.ui.confirm('Approve top-ups', `Send ₦${Number(b.total_ngn).toLocaleString()} to ${b.person_count} people? This spends real money.`, 'Approve and send'))) return;
+    await this.ui.run(() => this.api.post(`/topups/batches/${b.id}/approve`, { approve: ok }), ok ? 'Approved; sending starts shortly' : 'Cancelled');
     await this.load();
   }
 }

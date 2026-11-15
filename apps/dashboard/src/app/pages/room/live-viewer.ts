@@ -1,5 +1,5 @@
 import { Component, ElementRef, OnDestroy, effect, inject, input, signal, viewChild } from '@angular/core';
-import { Supa } from '../../core/supabase';
+import { Api } from '../../core/api';
 
 /** Plays the one-way video an agent publishes for a live-view request (LiveKit). */
 @Component({
@@ -10,7 +10,7 @@ import { Supa } from '../../core/supabase';
 })
 export class LiveViewer implements OnDestroy {
   requestId = input.required<string>();
-  private supa = inject(Supa);
+  private api = inject(Api);
   private video = viewChild.required<ElementRef<HTMLVideoElement>>('v');
   state = signal('Connecting…');
   private room: any;
@@ -22,7 +22,7 @@ export class LiveViewer implements OnDestroy {
   private async connect(id: string) {
     try {
       const { Room, RoomEvent, Track } = await import('livekit-client');
-      const { url, token } = await this.supa.fn<{ url: string; token: string }>('live-view', { action: 'view', request_id: id });
+      const { url, token } = await this.api.post<{ url: string; token: string }>(`/live-view/${id}/view-token`);
       this.room = new Room({ adaptiveStream: true });
       this.room.on(RoomEvent.TrackSubscribed, (track: any) => {
         if (track.kind === Track.Kind.Video) { track.attach(this.video().nativeElement); this.state.set('Live'); }

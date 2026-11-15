@@ -1,14 +1,13 @@
 import { inject } from '@angular/core';
 import { Router, type CanActivateFn, type Routes } from '@angular/router';
-import { Supa } from './core/supa';
+import { Api } from './core/api';
 import { Pin } from './core/pin';
 
-/** Signed in (SMS once), PIN entered, and onboarded. */
+/** Phone activated, PIN entered, and onboarded. */
 const ready: CanActivateFn = () => {
-  const s = inject(Supa), pin = inject(Pin), r = inject(Router);
-  if (!s.session() || !s.me()) return r.parseUrl('/login');
-  if (!pin.hasPin()) return r.parseUrl('/login');
-  if (!pin.unlocked()) return r.parseUrl('/lock');
+  const s = inject(Api), pin = inject(Pin), r = inject(Router);
+  if (!s.hasDevice() || !pin.hasPin() || !s.me()) return r.parseUrl('/login');
+  if (!pin.unlocked()) return r.parseUrl('/lock');   // also renews an expired session with the PIN
   if (!s.me()!.onboarded_at) return r.parseUrl('/onboarding');
   return true;
 };

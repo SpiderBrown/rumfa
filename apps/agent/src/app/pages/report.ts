@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonList, IonTextarea, IonTitle, IonToolbar } from '@ionic/angular';
 import { INCIDENT_CATEGORIES, type IncidentCategory } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -40,7 +40,7 @@ import { takePhoto } from '../core/photo';
 })
 export default class ReportPage {
   sosParam = input<string | undefined>(undefined, { alias: 'sos' });
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
   private router = inject(Router);
   private ui = inject(Ui);
@@ -57,7 +57,7 @@ export default class ReportPage {
 
   async send() {
     const c = this.cat()!;
-    await this.outbox.add('incident', { pu: this.supa.me()!.area_code, category: c.code, severity: this.sos() ? 'critical' : c.severity,
+    await this.outbox.add('incident', { pu: this.api.me()!.area_code, category: c.code, severity: this.sos() ? 'critical' : c.severity,
       description: this.note || null, sos: this.sos() }, `${this.sos() ? 'SOS: ' : ''}${c.label}`, this.blob);
     await this.ui.toast(this.sos() ? 'Emergency sent. Stay safe; the situation room will call you.' : 'Report saved. The situation room will follow up.');
     await this.router.navigateByUrl('/');

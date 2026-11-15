@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonSelect,
   IonSelectOption, IonTitle, IonToolbar } from '@ionic/angular';
 import { normaliseNgPhone } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 
@@ -43,10 +43,10 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class CoordContactPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   t = inject(I18n).t;
-  me = this.supa.me()!.id;
+  me = this.api.me()!.id;
   agencies = ['INEC', 'Police', 'Army', 'NSCDC', 'DSS', 'Traditional ruler', 'Local government', 'Other'];
   contacts = signal<any[]>([]);
   n = { agency: 'INEC', title: '', person: '', phone: '' };
@@ -56,18 +56,18 @@ export default class CoordContactPage {
   status(s: string) { return ({ pending: 'needs a test call', call_tested: 'waiting for approval', verified: 'verified', stale: 'confirm again', rejected: 'rejected' } as Record<string, string>)[s] ?? s; }
 
   async load() {
-    const me = this.supa.me()!;
-    const { data } = await this.supa.client.from('authority_contacts').select('*').like('area_code', `${me.area_code}%`).order('created_at', { ascending: false });
-    this.contacts.set(data ?? []);
+    const me = this.api.me()!;
+    const rows = await this.api.get<any[]>('/contacts', { area: me.area_code }).catch(() => this.contacts());
+    this.contacts.set([...rows].sort((a, b) => b.created_at.localeCompare(a.created_at)));
   }
 
   async add() {
-    const me = this.supa.me()!;
+    const me = this.api.me()!;
     const phone = normaliseNgPhone(this.n.phone);
     if (!this.n.title || !phone) { await this.ui.error('Title and a valid phone are required'); return; }
     try {
-      await this.supa.rpc('add_authority_contact', { p_agency: this.n.agency, p_title: this.n.title, p_person: this.n.person || null,
-        p_phone: phone, p_level: me.level === 'pu' ? 'ward' : me.level, p_area: me.area_code });
+      await this.api.post('/contacts', { agency: this.n.agency, title: this.n.title, person: this.n.person || undefined,
+        phone, level: me.level === 'pu' ? 'ward' : me.level, areaCode: me.level === 'pu' ? me.area_code.slice(0, 8) : me.area_code });
       await this.ui.toast('Saved. Now make a test call.');
       this.n = { agency: 'INEC', title: '', person: '', phone: '' };
       await this.load();
@@ -79,13 +79,13 @@ export default class CoordContactPage {
     window.location.href = `tel:${k.phone}`;
     setTimeout(async () => {
       const ok = await this.ui.confirm('Test call', `Did ${k.title} answer?`, 'Yes, answered');
-      await this.supa.rpc('mark_contact_call', { p_contact: k.id, p_ok: ok }).catch((e) => this.ui.error(e));
+      await this.api.post(`/contacts/${k.id}/call-result`, { ok }).catch((e) => this.ui.error(e));
       await this.load();
     }, 4000);
   }
 
   async approve(k: any, ok: boolean) {
-    await this.supa.rpc('approve_contact', { p_contact: k.id, p_approve: ok }).then(() => this.ui.toast('Approved')).catch((e) => this.ui.error(e));
+    await this.api.post(`/contacts/${k.id}/approve`, { approve: ok }).then(() => this.ui.toast(ok ? 'Approved' : 'Rejected')).catch((e) => this.ui.error(e));
     await this.load();
   }
 }

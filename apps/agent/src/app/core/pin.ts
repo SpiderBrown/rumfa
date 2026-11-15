@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 
-/** Local 4-digit PIN that unlocks the app after the first SMS sign-in. Stored only as a salted hash. */
+/** The 6-digit PIN, also checked on the phone so the app unlocks offline. Stored only as a salted hash; the server checks it too. */
 @Injectable({ providedIn: 'root' })
 export class Pin {
   readonly unlocked = signal(false);
@@ -15,7 +15,7 @@ export class Pin {
     localStorage.setItem('rumfa.pin', JSON.stringify({ salt, h: await this.hash(pin, salt), fails: 0 }));
     this.unlocked.set(true);
   }
-  /** Returns true when correct. After 5 wrong tries the person must sign in again by SMS. */
+  /** After 5 wrong tries the person must activate the phone again. */
   async check(pin: string): Promise<'ok' | 'wrong' | 'locked'> {
     const rec = JSON.parse(localStorage.getItem('rumfa.pin') ?? 'null');
     if (!rec) return 'locked';

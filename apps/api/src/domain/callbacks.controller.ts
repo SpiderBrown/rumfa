@@ -44,12 +44,15 @@ export class CallbacksController {
 
   /** Requests the caller handles: coordinators their area, room staff escalated ones (the database decides). */
   @Get() @Roles('coordinator', ...ROOM)
-  list(@CurrentUser() u: AuthUser, @Query('status') status?: string) {
+  list(@CurrentUser() u: AuthUser, @Query('status') status?: string, @Query('mine') mine?: string, @Query('sinceHours') sinceHours?: string) {
     return this.db.asUser(u, (q) => q(
       `select c.*, json_build_object('full_name', v.full_name, 'phone', v.phone, 'area_code', v.area_code) as requester
          from public.callback_requests c join public.volunteers v on v.id = c.requester_id
         where c.tenant_id = $1 and ($2::text is null or c.status = any(string_to_array($2, ',')))
-        order by c.due_at nulls last, c.created_at limit 300`, [u.tid, status || null]));
+          and ($3::boolean is not true or c.assigned_to = $4)
+          and ($5::int is null or c.updated_at >= now() - make_interval(hours => $5))
+        order by c.due_at nulls last, c.created_at limit 300`,
+      [u.tid, status || null, mine === 'true', u.mid, sinceHours ? Number(sinceHours) : null]));
   }
 
   @Post(':id/cancel') @HttpCode(204)

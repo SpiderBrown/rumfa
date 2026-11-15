@@ -7,7 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatIconModule } from '@angular/material/icon';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { Ui, label } from '../core/ui';
 
 /** Queues and shifts: assignment only picks operators who are on shift for the queue. */
@@ -43,8 +43,8 @@ import { Ui, label } from '../core/ui';
 
   <h2>Upcoming shifts</h2>
   <table mat-table [dataSource]="shifts()">
-    <ng-container matColumnDef="who"><th mat-header-cell *matHeaderCellDef>Person</th><td mat-cell *matCellDef="let s">{{ s.volunteers?.full_name }}</td></ng-container>
-    <ng-container matColumnDef="queue"><th mat-header-cell *matHeaderCellDef>Queue</th><td mat-cell *matCellDef="let s">{{ s.queues?.name }}</td></ng-container>
+    <ng-container matColumnDef="who"><th mat-header-cell *matHeaderCellDef>Person</th><td mat-cell *matCellDef="let s">{{ s.full_name }}</td></ng-container>
+    <ng-container matColumnDef="queue"><th mat-header-cell *matHeaderCellDef>Queue</th><td mat-cell *matCellDef="let s">{{ s.queue_name }}</td></ng-container>
     <ng-container matColumnDef="role"><th mat-header-cell *matHeaderCellDef>Role</th><td mat-cell *matCellDef="let s">{{ label(s.role) }}</td></ng-container>
     <ng-container matColumnDef="time"><th mat-header-cell *matHeaderCellDef>Time</th>
       <td mat-cell *matCellDef="let s">{{ s.starts_at | date: 'EEE d MMM HH:mm' }} – {{ s.ends_at | date: 'HH:mm' }}</td></ng-container>
@@ -63,7 +63,7 @@ import { Ui, label } from '../core/ui';
     .form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .queue { padding: 6px 0; } .queue input { width: 56px; }`,
 })
 export class ShiftsPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   label = label;
   staff = signal<any[]>([]);
@@ -75,24 +75,21 @@ export class ShiftsPage {
 
   async load() {
     const [s, q, sh] = await Promise.all([
-      this.supa.rpc('room_staff').catch(() => []),
-      this.supa.client.from('queues').select('*').order('kind'),
-      this.supa.client.from('shifts').select('*, volunteers(full_name), queues(name)').gte('ends_at', new Date().toISOString()).order('starts_at'),
+      this.api.get<any[]>('/people/room-staff').catch(() => []),
+      this.api.get<any[]>('/queues').catch(() => []),
+      this.api.get<any[]>('/shifts').catch(() => []),
     ]);
-    this.staff.set(s); this.queues.set(q.data ?? []); this.shifts.set(sh.data ?? []);
+    this.staff.set(s); this.queues.set(q); this.shifts.set(sh);
   }
 
   async addShift() {
     if (!this.n.volunteer || !this.n.queue || !this.n.starts || !this.n.ends) { this.ui.error('Fill all fields'); return; }
-    const { error } = await this.supa.client.from('shifts').insert({
-      tenant_id: this.supa.me()!.tenant_id, volunteer_id: this.n.volunteer, queue_id: this.n.queue, role: this.n.role,
-      starts_at: new Date(this.n.starts).toISOString(), ends_at: new Date(this.n.ends).toISOString(),
-    });
-    if (error) this.ui.error(error.message); else { this.ui.toast('Shift added'); await this.load(); }
+    const ok = await this.ui.run(() => this.api.post('/shifts', { volunteerId: this.n.volunteer, queueId: this.n.queue, role: this.n.role,
+      startsAt: new Date(this.n.starts).toISOString(), endsAt: new Date(this.n.ends).toISOString() }), 'Shift added');
+    if (ok) await this.load();
   }
-  async remove(id: string) { await this.supa.client.from('shifts').delete().eq('id', id); await this.load(); }
+  async remove(id: string) { await this.ui.run(() => this.api.del(`/shifts/${id}`)); await this.load(); }
   async setOverflow(id: string, v: string) {
-    const { error } = await this.supa.client.from('queues').update({ overflow_limit: Number(v) }).eq('id', id);
-    if (error) this.ui.error(error.message); else this.ui.toast('Saved');
+    await this.ui.run(() => this.api.patch(`/queues/${id}`, { overflowLimit: Number(v) }), 'Saved');
   }
 }

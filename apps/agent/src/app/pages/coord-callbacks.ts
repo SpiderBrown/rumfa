@@ -1,8 +1,7 @@
 import { Component, OnDestroy, inject, signal } from '@angular/core';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonTitle, IonToolbar } from '@ionic/angular';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { CALLBACK_REASONS } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 
@@ -30,34 +29,30 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class CoordCallbacksPage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   t = inject(I18n).t;
   rows = signal<any[]>([]);
-  private rt: RealtimeChannel;
+  private stopLive: () => void;
 
   constructor() {
     void this.load();
-    this.rt = this.supa.client.channel('coord-cb')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'callback_requests' }, () => void this.load()).subscribe();
+    this.stopLive = this.api.onChange(() => void this.load(), ['callback_requests']);
   }
-  ngOnDestroy() { void this.supa.client.removeChannel(this.rt); }
+  ngOnDestroy() { this.stopLive(); }
 
   reason(c: string) { return CALLBACK_REASONS.find((r) => r.code === c)?.label ?? c; }
   waiting(t: string) { return `${Math.round((Date.now() - new Date(t).getTime()) / 60000)} min ago`; }
 
   async load() {
-    const { data } = await this.supa.client.from('callback_requests')
-      .select('*, requester:volunteers!callback_requests_requester_id_fkey(full_name, phone, area_code)')
-      .eq('assigned_to', this.supa.me()!.id).in('status', ['waiting', 'calling', 'no_answer']).order('due_at');
-    this.rows.set(data ?? []);
+    this.rows.set(await this.api.get<any[]>('/callbacks', { mine: true, status: 'waiting,calling,no_answer' }).catch(() => this.rows()));
   }
 
   async call(r: any) {
     try {
-      const res = await this.supa.fn<{ bridged: boolean; dial_direct?: string }>('calls', { action: 'callback', callback_id: r.id });
+      const res = await this.api.post<{ bridged: boolean; dialDirect?: string }>(`/callbacks/${r.id}/call`);
       if (res.bridged) await this.ui.toast('Your phone will ring now. Answer it and we connect the agent.');
-      else if (res.dial_direct) window.location.href = `tel:${res.dial_direct}`;
+      else if (res.dialDirect) window.location.href = `tel:${res.dialDirect}`;
     } catch {
       // No internet: call directly on the phone line
       window.location.href = `tel:${r.requester?.phone}`;
@@ -66,7 +61,7 @@ export default class CoordCallbacksPage implements OnDestroy {
   }
 
   async done(r: any, answered: boolean) {
-    await this.supa.rpc('complete_callback', { p_id: r.id, p_answered: answered, p_outcome: answered ? 'Talked' : null }).catch((e) => this.ui.error(e));
+    await this.api.post(`/callbacks/${r.id}/complete`, { answered, outcome: answered ? 'Talked' : undefined }).catch((e) => this.ui.error(e));
     await this.load();
   }
 }

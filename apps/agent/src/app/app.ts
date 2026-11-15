@@ -3,8 +3,7 @@ import { Router } from '@angular/router';
 import { IonApp, IonRouterOutlet, AlertController } from '@ionic/angular';
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { Supa } from './core/supa';
+import { Api } from './core/api';
 import { I18n } from './core/i18n';
 
 @Component({
@@ -13,23 +12,23 @@ import { I18n } from './core/i18n';
   template: '<ion-app><ion-router-outlet /></ion-app>',
 })
 export class App {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private router = inject(Router);
   private alert = inject(AlertController);
   private i18n = inject(I18n);
-  private rt?: RealtimeChannel;
+  private stopLive?: () => void;
 
   constructor() {
     // When signed in: register for push, and listen for live-view requests
     effect(() => {
-      const me = this.supa.me();
-      if (!me || !this.supa.session()) return;
+      const me = this.api.me();
+      if (!me || !this.api.session()) return;
       void this.registerPush();
-      this.rt?.unsubscribe();
-      this.rt = this.supa.client.channel(`lv-${me.id}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_view_requests', filter: `agent_id=eq.${me.id}` },
-          (p) => void this.askLiveView((p.new as any).id))
-        .subscribe();
+      // Live-view requests addressed to me arrive on my own live-update room
+      this.stopLive?.();
+      this.stopLive = this.api.onChange((c) => {
+        if (c.op === 'insert' && c.status === 'requested' && c.id) void this.askLiveView(c.id);
+      }, ['live_view_requests']);
     });
   }
 
@@ -37,7 +36,7 @@ export class App {
     if (!Capacitor.isNativePlatform()) return;
     const perm = await PushNotifications.requestPermissions();
     if (perm.receive !== 'granted') return;
-    await PushNotifications.addListener('registration', (t) => void this.supa.rpc('register_device', { p_token: t.value, p_platform: Capacitor.getPlatform() }));
+    await PushNotifications.addListener('registration', (t) => void this.api.post('/me/device-tokens', { token: t.value, platform: Capacitor.getPlatform() }).catch(() => undefined));
     await PushNotifications.addListener('pushNotificationActionPerformed', (a) => {
       const d = a.notification.data ?? {};
       if (d.template === 'live_view_request') void this.router.navigate(['/live', d.request_id]);
@@ -52,7 +51,7 @@ export class App {
       header: this.i18n.t('Live view request'),
       message: this.i18n.t('The situation room asks to see your polling unit through your camera.'),
       buttons: [
-        { text: this.i18n.t('No'), role: 'cancel', handler: () => void this.supa.rpc('answer_live_view', { p_id: id, p_accept: false }) },
+        { text: this.i18n.t('No'), role: 'cancel', handler: () => void this.api.post(`/live-view/${id}/answer`, { accept: false }).catch(() => undefined) },
         { text: this.i18n.t('Yes'), handler: () => void this.router.navigate(['/live', id]) },
       ],
     });

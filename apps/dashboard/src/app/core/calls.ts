@@ -1,5 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { Supa } from './supabase';
+import { Api } from './api';
 import { Ui } from './ui';
 
 /**
@@ -10,7 +10,7 @@ import { Ui } from './ui';
  */
 @Injectable({ providedIn: 'root' })
 export class Calls {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   readonly active = signal<{ callId: string; label: string; via: 'browser' | 'phone' } | null>(null);
   private client: any = null;
@@ -23,7 +23,7 @@ export class Calls {
       const s = document.createElement('script'); s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error('Could not load call client'));
       document.head.appendChild(s);
     });
-    const { token } = await this.supa.fn<{ token: string }>('calls', { action: 'token' });
+    const { token } = await this.api.post<{ token: string }>('/calls/token');
     const AT = (window as any).Africastalking;
     this.client = new AT.Client(token);
     this.client.on('hangup', () => this.active.set(null));
@@ -36,18 +36,16 @@ export class Calls {
     await this.ui.run(async () => {
       const client = await this.loadClient().catch(() => null);
       if (client) {
-        const { call_id, phone } = await this.supa.fn<{ call_id: string; phone: string }>('calls',
-          { action: 'prepare', target, id, case_id: caseId ?? null, reason: reason ?? null });
+        const { callId, phone } = await this.api.post<{ callId: string; phone: string }>('/calls/prepare', { target, id, caseId, reason });
         client.call(phone);
-        this.active.set({ callId: call_id, label, via: 'browser' });
+        this.active.set({ callId, label, via: 'browser' });
       } else if (target === 'volunteer') {
-        const { call_id } = await this.supa.fn<{ call_id: string }>('calls', { action: 'bridge', volunteer_id: id, case_id: caseId ?? null, reason });
-        this.active.set({ callId: call_id, label, via: 'phone' });
+        const { callId } = await this.api.post<{ callId: string }>('/calls/bridge', { volunteerId: id, caseId, reason });
+        this.active.set({ callId, label, via: 'phone' });
         this.ui.toast('Your phone will ring first, then we connect ' + label);
       } else {
         // Authority contacts: register the call, then dial from the operator's phone
-        const { phone } = await this.supa.fn<{ call_id: string; phone: string }>('calls',
-          { action: 'prepare', target, id, case_id: caseId ?? null, reason: reason ?? null });
+        const { phone } = await this.api.post<{ callId: string; phone: string }>('/calls/prepare', { target, id, caseId, reason });
         window.location.href = `tel:${phone}`;
       }
     });

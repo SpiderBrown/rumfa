@@ -2,7 +2,7 @@ import { ApplicationConfig, inject, provideAppInitializer, provideBrowserGlobalE
 import { provideRouter, withComponentInputBinding, withHashLocation } from '@angular/router';
 import { provideIonicAngular } from '@ionic/angular';
 import { routes } from './app.routes';
-import { Supa } from './core/supa';
+import { Api } from './core/api';
 import { Outbox } from './core/outbox';
 
 export const appConfig: ApplicationConfig = {
@@ -12,8 +12,8 @@ export const appConfig: ApplicationConfig = {
     provideIonicAngular({ mode: 'md' }),
     provideRouter(routes, withComponentInputBinding(), withHashLocation()),
     provideAppInitializer(() => {
-      const supa = inject(Supa), outbox = inject(Outbox);   // inject before any await
-      return supa.init().then(() => outbox.init());
+      const api = inject(Api), outbox = inject(Outbox);   // inject before any await
+      return api.init().then(() => outbox.init());
     }),
   ],
 };

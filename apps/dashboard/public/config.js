@@ -1,10 +1,12 @@
-// Deployment settings, read at start-up. Replace per environment; never put
-// the service-role key here (the anon key is public by design).
+// Deployment settings for one client's dashboard site. The same build is hosted on each client's domain;
+// only this file differs. No secrets here: the site talks only to the Rumfa API.
 window.RUMFA_CONFIG = {
-  supabaseUrl: 'http://127.0.0.1:54321',
-  supabaseAnonKey: 'replace-with-anon-key',
-  // Name shown before sign-in (after sign-in the client's own name from tenant settings is shown)
-  brand: 'Rumfa',
+  // Rumfa API (one for all clients)
+  apiUrl: 'http://localhost:3000',
+  // The client this site belongs to; staff of other clients cannot sign in here
+  tenantId: 'a1a1a1a1-0000-4000-8000-000000000001',
+  // Name shown before sign-in (after sign-in the client's own name from its settings is shown)
+  brand: 'ALAWA',
   // Africa's Talking WebRTC client script; without it, calls ring the operator's own phone first (bridged).
   atWebrtcScript: '',
 };

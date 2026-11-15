@@ -105,6 +105,12 @@ export class ResultsController {
     return row;
   }
 
+  @Get('elections/:id/parties')
+  async parties(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) e: string) {
+    await this.election(u, e);
+    return (await this.db.asUser(u, (q) => q(`select party from public.election_parties where election_id = $1 order by ballot_order`, [e]))).map((r) => r.party);
+  }
+
   @Get('irev/review')
   review(@CurrentUser() u: AuthUser, @Query('election', ParseUUIDPipe) e: string) {
     return this.db.asUser(u, (q) => q(

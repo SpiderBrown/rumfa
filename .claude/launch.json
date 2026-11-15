@@ -1,7 +1,38 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "dashboard-dist", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "4300", "-d", "apps/dashboard/dist/dashboard/browser"], "port": 4300 },
-    { "name": "agent-dist", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "4301", "-d", "apps/agent/dist/agent/browser"], "port": 4301 }
+    {
+      "name": "dashboard-dist",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4300",
+        "-d",
+        "apps/dashboard/dist/dashboard/browser"
+      ],
+      "port": 4300
+    },
+    {
+      "name": "agent-dist",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4301",
+        "-d",
+        "apps/agent/dist/agent/browser"
+      ],
+      "port": 4301
+    },
+    {
+      "name": "api-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && DB_NAME=rumfa_dev DB_USER=$USER DB_PASSWORD= OTP_MODE=fixed FIXED_OTP=246810 STORAGE_DRIVER=local STORAGE_DIR=$TMPDIR/rumfa-dev-storage WEBHOOK_KEY=dev-webhook-key-long-enough-x node dist/main"
+      ],
+      "port": 3000
+    }
   ]
 }

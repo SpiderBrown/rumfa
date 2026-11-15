@@ -5,7 +5,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
 interface Tally { stage: 'quick' | 'ec8a' | 'irev'; party: string; votes: number; units: number }
@@ -71,7 +71,7 @@ interface Estimate { state_code: string; party: string; share: number; margin: n
     h2 { font: var(--mat-sys-title-medium); }`,
 })
 export class ResultsPage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   stages = [
     { key: 'quick' as const, title: '1. Early estimate', desc: 'Quick counts from agents and volunteers' },
@@ -101,13 +101,13 @@ export class ResultsPage implements OnDestroy {
   pct(n: number, d: number) { return d ? `${n} (${Math.round((100 * n) / d)}%)` : '—'; }
 
   async load() {
-    const e = this.supa.liveElectionId();
+    const e = this.api.liveElectionId();
     if (!e) return;
     try {
       const [t, o, est] = await Promise.all([
-        this.supa.rpc<Tally[]>('live_tallies', { p_election: e, p_area: this.area() }),
-        this.supa.rpc<Overview[]>('results_overview', { p_election: e, p_state: this.area() === 'NG' ? null : this.area() }),
-        this.area() === 'NG' ? this.supa.rpc<Estimate[]>('sample_estimate', { p_election: e }) : Promise.resolve([]),
+        this.api.get<Tally[]>('/results/tallies', { election: e, area: this.area() }),
+        this.api.get<Overview[]>('/results/overview', { election: e, state: this.area() === 'NG' ? undefined : this.area() }),
+        this.area() === 'NG' ? this.api.get<Estimate[]>('/results/sample-estimate', { election: e }) : Promise.resolve([] as Estimate[]),
       ]);
       this.tallies.set(t); this.overview.set(o); this.estimate.set(est);
       this.updated.set(new Date().toLocaleTimeString());

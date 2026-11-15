@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Network } from '@capacitor/network';
 import { encodeCallbackSms, encodeIncidentSms, encodeResultSms, type Severity } from '@rumfa/shared';
-import { Supa } from './supa';
+import { Api, ApiError } from './api';
 
 /**
  * Offline-first queue. Every report is saved on the phone first (IndexedDB),
@@ -20,6 +20,8 @@ export interface OutItem {
   error?: string;
   smsSentAt?: number;
   label: string;              // shown in the "Waiting to send" list
+  tenantId?: string;          // the organisation it was made for (people may work for several)
+  agentCode?: string | null;  // that organisation's agent code, used in the SMS fallback
 }
 
 const DB = 'rumfa-outbox';
@@ -45,7 +47,7 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 
 @Injectable({ providedIn: 'root' })
 export class Outbox {
-  private supa = inject(Supa);
+  private api = inject(Api);
   readonly items = signal<OutItem[]>([]);
   readonly online = signal(true);
   readonly pending = computed(() => this.items().filter((i) => i.status !== 'sent'));
@@ -70,7 +72,9 @@ export class Outbox {
   private async put(i: OutItem) { await tx('readwrite', (s) => s.put(i)); await this.reload(); }
 
   async add(kind: ItemKind, payload: Record<string, any>, label: string, photo?: Blob | null): Promise<OutItem> {
-    const item: OutItem = { id: crypto.randomUUID(), kind, payload, photo: photo ?? null, createdAt: Date.now(), status: 'waiting', label };
+    const me = this.api.me();
+    const item: OutItem = { id: crypto.randomUUID(), kind, payload, photo: photo ?? null, createdAt: Date.now(), status: 'waiting', label,
+      tenantId: me?.tenant_id, agentCode: me?.agent_code ?? null };
     await this.put(item);
     void this.sync();
     return item;
@@ -83,8 +87,7 @@ export class Outbox {
   }
 
   smsText(i: OutItem): string {
-    const me = this.supa.me()!;
-    const code = me.agent_code ?? 'X';
+    const code = i.agentCode ?? this.api.me()?.agent_code ?? 'X';
     if (i.kind === 'result') {
       const p = i.payload;
       return encodeResultSms({ puCode: p['pu'], version: p['version'] ?? 1, agentCode: code, registered: p['registered'], accredited: p['accredited'],
@@ -108,81 +111,67 @@ export class Outbox {
     await this.put(i);
   }
 
+  /** Items waiting for the organisation the person is signed in to now. */
+  waitingHere() {
+    const tid = this.api.me()?.tenant_id;
+    return this.pending().filter((i) => !i.tenantId || i.tenantId === tid);
+  }
+
   async sync() {
-    if (this.syncing || !this.supa.session()) return;
+    const tid = this.api.me()?.tenant_id;
+    if (this.syncing || !this.api.session() || !tid) return;
     this.syncing = true;
     try {
-      for (const i of this.items().filter((x) => x.status === 'waiting' || x.status === 'sending').reverse()) {
+      // Only items made for the organisation signed in now; others wait until the person switches back
+      for (const i of this.items().filter((x) => (x.status === 'waiting' || x.status === 'sending') && (!x.tenantId || x.tenantId === tid)).reverse()) {
         try {
           i.status = 'sending'; await this.put(i);
           await this.send(i);
           i.status = 'sent'; i.error = undefined; i.photo = null;
+          this.online.set(true);
         } catch (e: any) {
-          // business errors (e.g. wrong unit) won't fix themselves; network errors retry
-          const msg = e?.message ?? String(e);
-          const network = /fetch|network|Failed to|timeout/i.test(msg);
-          i.status = network ? 'waiting' : 'failed';
-          i.error = network ? undefined : msg;
-          if (network) { this.online.set(false); await this.put(i); break; }
+          // Business errors (e.g. wrong unit) will not fix themselves; connection and server errors retry
+          const retry = !(e instanceof ApiError) || e.network || e.status === 401;
+          i.status = retry ? 'waiting' : 'failed';
+          i.error = retry ? undefined : e.message;
+          if (retry) { if (e instanceof ApiError && e.status === 0) this.online.set(false); await this.put(i); break; }
         }
         await this.put(i);
       }
     } finally { this.syncing = false; }
   }
 
-  private async upload(bucket: string, folder: string, blob: Blob): Promise<string> {
-    const me = this.supa.me()!;
-    const path = `${me.tenant_id}/${folder}/${crypto.randomUUID()}.jpg`;
-    const { error } = await this.supa.client.storage.from(bucket).upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: false });
-    if (error) throw new Error(error.message);
-    return path;
-  }
-
   private async send(i: OutItem) {
     const p = i.payload;
-    const me = this.supa.me()!;
+    const clientId = i.id;
     switch (i.kind) {
       case 'incident': {
-        const media = i.photo ? [await this.upload('incident-media', p['pu'], i.photo)] : [];
-        await this.supa.rpc('report_incident', { p_pu: p['pu'], p_category: p['category'], p_severity: p['severity'] ?? null,
-          p_description: p['description'] ?? null, p_media: media, p_client_id: i.id, p_is_sos: !!p['sos'] });
+        const mediaPaths = i.photo ? [await this.api.upload('incident', i.photo, 'jpg', p['pu'])] : [];
+        await this.api.post('/incidents', { pu: p['pu'], category: p['category'], severity: p['severity'] ?? undefined,
+          description: p['description'] ?? undefined, mediaPaths, sos: !!p['sos'], clientId });
         return;
       }
       case 'result': {
-        const photo = i.photo ? await this.upload('ec8a', p['pu'], i.photo) : null;
-        await this.supa.rpc('submit_result', { p_pu: p['pu'], p_registered: p['registered'], p_accredited: p['accredited'], p_rejected: p['rejected'],
-          p_total_valid: p['total_valid'], p_votes: p['votes'], p_photo: photo, p_client_id: i.id });
+        const photoPath = i.photo ? await this.api.upload('ec8a', i.photo, 'jpg', p['pu']) : undefined;
+        await this.api.post('/results', { pu: p['pu'], registered: p['registered'], accredited: p['accredited'], rejected: p['rejected'],
+          totalValid: p['total_valid'], votes: p['votes'], photoPath, clientId });
         return;
       }
       case 'callback':
-        await this.supa.rpc('request_callback', { p_reason: p['reason'], p_voice_note: null });
+        await this.api.post('/callbacks', { reason: p['reason'] });
         return;
-      case 'checkin': {
-        const { data: te } = await this.supa.client.from('tenant_elections').select('election_id').eq('purpose', 'live').single();
-        const { error } = await this.supa.client.from('checkins').insert({ tenant_id: me.tenant_id, election_id: te!.election_id, volunteer_id: me.id,
-          pu_code: p['pu'], lat: p['lat'], lng: p['lng'], accuracy_m: p['accuracy'], client_id: i.id, at: new Date(i.createdAt).toISOString() });
-        if (error && error.code !== '23505') throw new Error(error.message);
+      case 'checkin':
+        await this.api.post('/checkins', { pu: p['pu'], lat: p['lat'], lng: p['lng'], accuracy: p['accuracy'], clientId });
         return;
-      }
-      case 'checklist': {
-        const { data: te } = await this.supa.client.from('tenant_elections').select('election_id').eq('purpose', 'live').single();
-        const { error } = await this.supa.client.from('checklist_responses').upsert({ tenant_id: me.tenant_id, election_id: te!.election_id,
-          volunteer_id: me.id, pu_code: p['pu'], item_code: p['item'], answer: p['answer'], client_id: i.id }, { onConflict: 'election_id,volunteer_id,item_code' });
-        if (error) throw new Error(error.message);
+      case 'checklist':
+        await this.api.put('/checklist', { pu: p['pu'], item: p['item'], answer: p['answer'], clientId });
         return;
-      }
-      case 'quick': {
-        const { data: te } = await this.supa.client.from('tenant_elections').select('election_id').eq('purpose', 'live').single();
-        const { error } = await this.supa.client.from('quick_tallies').insert({ tenant_id: me.tenant_id, election_id: te!.election_id,
-          volunteer_id: me.id, pu_code: p['pu'], votes: p['votes'], client_id: i.id });
-        if (error && error.code !== '23505') throw new Error(error.message);
+      case 'quick':
+        await this.api.post('/quick-tallies', { pu: p['pu'], votes: p['votes'], clientId });
         return;
-      }
       case 'message': {
-        const media = i.photo ? await this.upload('chat-media', 'chat', i.photo) : null;
-        const { error } = await this.supa.client.from('messages').insert({ tenant_id: me.tenant_id, channel_id: p['channel'], sender_id: me.id,
-          kind: p['kind'] ?? 'text', body: p['body'] ?? null, media_path: media, client_id: i.id, sent_at: new Date(i.createdAt).toISOString() });
-        if (error && error.code !== '23505') throw new Error(error.message);
+        const mediaPath = i.photo ? await this.api.upload('chat', i.photo, 'jpg') : undefined;
+        await this.api.post(`/channels/${p['channel']}/messages`, { kind: p['kind'] ?? undefined, body: p['body'] ?? undefined, mediaPath, clientId });
         return;
       }
     }

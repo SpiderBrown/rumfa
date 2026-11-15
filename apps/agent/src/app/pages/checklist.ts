@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { IonBackButton, IonButtons, IonContent, IonHeader, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonSegment,
   IonSegmentButton, IonTitle, IonToolbar } from '@ionic/angular';
 import { Router } from '@angular/router';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -60,7 +60,7 @@ const ITEMS: Item[] = [
   styles: `ion-segment { width: 140px; } .small { max-width: 120px; }`,
 })
 export default class ChecklistPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
   private ui = inject(Ui);
   private router = inject(Router);
@@ -74,7 +74,7 @@ export default class ChecklistPage {
     const a = { ...this.answers(), [i.code]: value };
     this.answers.set(a);
     localStorage.setItem('rumfa.checklist', JSON.stringify(a));
-    await this.outbox.add('checklist', { pu: this.supa.me()!.area_code, item: i.code, answer: { value } }, `Checklist: ${i.text}`);
+    await this.outbox.add('checklist', { pu: this.api.me()!.area_code, item: i.code, answer: { value } }, `Checklist: ${i.text}`);
     if (value === 'no' && i.problem && await this.ui.confirm('Report this problem?', 'The situation room will be told straight away.', 'Report')) {
       await this.router.navigate(['/report']);
     }

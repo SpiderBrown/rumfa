@@ -2,7 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonSelect, IonSelectOption, IonTitle, IonToolbar } from '@ionic/angular';
 import { normaliseNgPhone, normalisePuCode } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 
@@ -27,7 +27,8 @@ import { Ui } from '../core/ui';
       <ion-list-header>People ({{ people().length }})</ion-list-header>
       @for (p of people(); track p.id) {
         <ion-item>
-          <ion-label><h2>{{ p.full_name }}</h2><p>{{ p.role }} · {{ p.area_code }} @if (!p.onboarded_at) { · not signed in yet }</p></ion-label>
+          <ion-label><h2>{{ p.full_name }}</h2><p>{{ p.role }} · {{ p.area_code }} @if (!p.activated) { · not signed in yet }</p></ion-label>
+          <ion-button slot="end" fill="clear" (click)="code(p)"><ion-icon slot="icon-only" name="key" /></ion-button>
           <ion-button slot="end" fill="clear" [href]="'tel:' + p.phone"><ion-icon slot="icon-only" name="call" /></ion-button>
         </ion-item>
       }
@@ -35,34 +36,42 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class CoordTeamPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   t = inject(I18n).t;
   people = signal<any[]>([]);
-  n = { name: '', phone: '', role: 'agent', area: this.supa.me()!.area_code + '-' };
+  n = { name: '', phone: '', role: 'agent', area: this.api.me()!.area_code + '-' };
 
   constructor() { void this.load(); }
 
   async load() {
-    const me = this.supa.me()!;
-    const { data } = await this.supa.client.from('volunteers').select('*').like('area_code', `${me.area_code}%`).neq('id', me.id)
-      .neq('status', 'removed').order('area_code');
-    this.people.set(data ?? []);
+    const me = this.api.me()!;
+    const rows = await this.api.get<any[]>('/people', { area: me.area_code }).catch(() => this.people());
+    this.people.set(rows.filter((p) => p.id !== me.id));
   }
 
   async add() {
-    const me = this.supa.me()!;
+    const me = this.api.me()!;
     const phone = normaliseNgPhone(this.n.phone);
     const level = this.n.role === 'coordinator' ? 'ward' : 'pu';
     const area = level === 'pu' ? normalisePuCode(this.n.area) : this.n.area.trim();
     if (!this.n.name || !phone || !area) { await this.ui.error('Check the name, phone and code'); return; }
-    const { error } = await this.supa.client.from('volunteers').insert({
-      tenant_id: me.tenant_id, full_name: this.n.name, phone, role: this.n.role, level, area_code: area, created_by: me.id,
-      agent_code: this.n.role === 'agent' ? Math.random().toString(36).slice(2, 6).toUpperCase() : null,
-    });
-    if (error) { await this.ui.error(error.message.includes('row-level') ? 'You can only add people inside your own area.' : error.message); return; }
-    await this.ui.toast(`${this.n.name} added. They sign in with an SMS code to ${phone}.`);
+    try {
+      await this.api.post('/people', { fullName: this.n.name, phone, role: this.n.role, level, areaCode: area });
+    } catch (e: any) {
+      await this.ui.error(e?.status === 403 ? 'You can only add people inside your own area.' : e);
+      return;
+    }
+    await this.ui.toast(`${this.n.name} added. They activate the app on ${phone}, or with an activation code from you.`);
     this.n = { name: '', phone: '', role: 'agent', area: me.area_code + '-' };
     await this.load();
+  }
+
+  /** One-time code the person types instead of an SMS code (valid 48 hours). */
+  async code(p: any) {
+    try {
+      const r = await this.api.post<{ code: string; expiresAt: string }>(`/people/${p.id}/activation-code`);
+      await this.ui.confirm(`Activation code for ${p.full_name}`, `${r.code}\nValid until ${new Date(r.expiresAt).toLocaleString()}.`, 'Done');
+    } catch (e) { await this.ui.error(e); }
   }
 }

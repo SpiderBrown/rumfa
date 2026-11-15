@@ -1,12 +1,12 @@
 import { inject } from '@angular/core';
 import { Router, type CanActivateFn, type Routes } from '@angular/router';
-import { Supa } from './core/supabase';
+import { Api } from './core/api';
 
 const signedIn: CanActivateFn = () => {
-  const s = inject(Supa);
+  const s = inject(Api);
   return s.me() ? true : inject(Router).parseUrl('/login');
 };
-const roles = (...r: string[]): CanActivateFn => () => r.includes(inject(Supa).me()?.role ?? '') || inject(Router).parseUrl('/');
+const roles = (...r: string[]): CanActivateFn => () => r.includes(inject(Api).me()?.role ?? '') || inject(Router).parseUrl('/');
 
 export const routes: Routes = [
   { path: 'login', loadComponent: () => import('./pages/login').then((m) => m.LoginPage) },

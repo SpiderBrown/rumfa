@@ -4,7 +4,7 @@ import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonNote,
   IonProgressBar, IonTitle, IonToolbar } from '@ionic/angular';
 import { checkResult, type ResultFigures } from '@rumfa/shared';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -68,13 +68,13 @@ import { takePhoto } from '../core/photo';
            .nav ion-button { flex: 1; } .warn { color: #b3261e; } .big { font-size: 1.2rem; color: var(--ion-text-color); }`,
 })
 export default class ResultPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
   private router = inject(Router);
   private ui = inject(Ui);
   t = inject(I18n).t;
-  pu = this.supa.me()!.area_code;
-  parties = this.supa.parties;
+  pu = this.api.me()!.area_code;
+  parties = this.api.parties;
   header = [
     { key: 'registered', label: 'Registered voters' }, { key: 'accredited', label: 'Accredited voters' },
     { key: 'rejected', label: 'Rejected ballots' }, { key: 'totalValid', label: 'Total valid votes' },

@@ -9,8 +9,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { Supa } from '../core/supabase';
+import { Api } from '../core/api';
 import { AgoPipe, Ui, label } from '../core/ui';
 
 interface AreaRow { area_code: string; name: string; units: number; not_checked: number; not_on_irev: number; on_irev: number;
@@ -104,7 +103,7 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
     mat-progress-bar { width: 140px; display: inline-block; margin-right: 8px; }`,
 })
 export class IrevPage implements OnDestroy {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   label = label;
   cols = ['area', 'progress', 'status', 'ocr', 'act'];
@@ -115,7 +114,7 @@ export class IrevPage implements OnDestroy {
   names = signal<Record<string, string>>({ NG: 'All covered states' });
   unit = signal<any | null>(null);
   unitLog = signal<any[]>([]);
-  election = computed(() => this.mode() === 'live' ? this.supa.liveElectionId() : this.supa.baselineElectionId());
+  election = computed(() => this.mode() === 'live' ? this.api.liveElectionId() : this.api.baselineElectionId());
   isUnitLevel = computed(() => this.parent().length === 8);
   levelName = computed(() => ({ 2: 'State', 5: 'LGA', 8: 'Ward' } as Record<number, string>)[this.parent() === 'NG' ? 2 : this.parent().length + 3] ?? 'Polling unit');
   crumbs = computed(() => {
@@ -123,15 +122,13 @@ export class IrevPage implements OnDestroy {
     const codes = p === 'NG' ? ['NG'] : ['NG', p.slice(0, 2), p.slice(0, 5), p.slice(0, 8)].filter((c, i, a) => c.length <= p.length && a.indexOf(c) === i);
     return codes.map((c) => ({ code: c, name: this.names()[c] ?? c }));
   });
-  private rt: RealtimeChannel;
+  private stopLive: () => void;
 
   constructor() {
     void this.load();
-    this.rt = this.supa.client.channel('irev-jobs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'irev_fetch_jobs' }, () => { void this.loadJobs(); void this.loadRows(); })
-      .subscribe();
+    this.stopLive = this.api.onChange(() => { void this.loadJobs(); void this.loadRows(); }, ['irev_fetch_jobs']);
   }
-  ngOnDestroy() { void this.supa.client.removeChannel(this.rt); }
+  ngOnDestroy() { this.stopLive(); }
 
   setMode(m: 'baseline' | 'live') { this.mode.set(m); void this.load(); }
   go(code: string) { this.parent.set(code); this.unit.set(null); void this.loadRows(); }
@@ -141,32 +138,27 @@ export class IrevPage implements OnDestroy {
   async loadRows() {
     const e = this.election();
     if (!e) { this.ui.toast(`No ${this.mode()} election is set up for your organisation.`); return; }
-    const rows = await this.ui.run(() => this.supa.rpc<AreaRow[]>('irev_area_summary', { p_election: e, p_parent: this.parent() }));
+    const rows = await this.ui.run(() => this.api.get<AreaRow[]>('/irev/summary', { election: e, parent: this.parent() }));
     if (!rows) return;
     this.rows.set(rows);
     this.names.set({ ...this.names(), ...Object.fromEntries(rows.map((r) => [r.area_code, r.name ?? r.area_code])) });
   }
 
   async loadJobs() {
-    const { data } = await this.supa.client.from('irev_fetch_jobs').select('*').eq('election_id', this.election() ?? '')
-      .order('created_at', { ascending: false }).limit(20);
-    this.jobs.set((data ?? []) as Job[]);
+    const e = this.election();
+    if (!e) return;
+    this.jobs.set((await this.api.get<Job[]>('/irev/jobs', { election: e }).catch(() => [])).slice(0, 20));
   }
 
   async fetch(area: string, type: 'baseline' | 'live' | 'recheck' | 'ocr', auto = false) {
     const level = area === 'NG' ? 'national' : ({ 2: 'state', 5: 'lga', 8: 'ward' } as Record<number, string>)[area.length];
-    const me = this.supa.me()!;
-    const { error } = await this.supa.client.from('irev_fetch_jobs').insert({
-      tenant_id: me.tenant_id, election_id: this.election(), job_type: type, area_level: level, area_code: area,
-      auto_recheck: auto, interval_min: 10, requested_by: me.id,
-    });
-    if (error) this.ui.error(error.message); else this.ui.toast(`${label(type)} job queued for ${this.names()[area] ?? area}`);
+    const ok = await this.ui.run(() => this.api.post('/irev/jobs', { electionId: this.election(), jobType: type, areaLevel: level, areaCode: area, autoRecheck: auto, intervalMin: 10 }));
+    if (ok) this.ui.toast(`${label(type)} job queued for ${this.names()[area] ?? area}`);
     await this.loadJobs();
   }
 
   async setJob(j: Job, status: string) {
-    const { error } = await this.supa.client.from('irev_fetch_jobs').update({ status }).eq('id', j.id);
-    if (error) this.ui.error(error.message);
+    await this.ui.run(() => this.api.patch(`/irev/jobs/${j.id}`, { status }));
     await this.loadJobs();
   }
 
@@ -174,25 +166,21 @@ export class IrevPage implements OnDestroy {
 
   async openUnit(r: AreaRow) {
     const e = this.election();
-    const [{ data: u }, { data: log }] = await Promise.all([
-      this.supa.client.from('irev_availability').select('*').eq('election_id', e!).eq('pu_code', r.area_code).maybeSingle(),
-      this.supa.client.from('irev_check_log').select('*').eq('election_id', e!).eq('pu_code', r.area_code).order('at', { ascending: false }).limit(20),
-    ]);
-    this.unit.set(u ?? { pu_code: r.area_code, status: 'not_checked', ocr_status: 'not_read' });
-    this.unitLog.set(log ?? []);
+    const d = await this.ui.run(() => this.api.get<{ availability: any; log: any[] }>(`/irev/units/${r.area_code}`, { election: e }));
+    if (!d) return;
+    this.unit.set(d.availability ?? { pu_code: r.area_code, status: 'not_checked', ocr_status: 'not_read' });
+    this.unitLog.set(d.log);
   }
 
   async openSheet(pu: string) {
-    const url = await this.ui.run(() => this.supa.signedUrl({ kind: 'irev', election_id: this.election(), pu_code: pu }));
+    const url = await this.ui.run(() => this.api.viewUrl({ kind: 'irev', electionId: this.election(), pu }));
     if (url) window.open(url, '_blank', 'noopener');
   }
 
   async exportCsv(area: string) {
     const e = this.election();
-    const { data, error } = await this.supa.client.from('irev_availability')
-      .select('pu_code, status, ocr_status, first_seen_at, irev_updated_at, replaced_count, last_checked_at')
-      .eq('election_id', e!).like('pu_code', `${area}%`).order('pu_code').limit(20000);
-    if (error) { this.ui.error(error.message); return; }
+    const data = await this.ui.run(() => this.api.get<any[]>('/irev/units', { election: e, area: area === 'NG' ? undefined : area }));
+    if (!data) return;
     const head = 'pu_code,status,ocr_status,first_seen_at,irev_updated_at,replaced_count,last_checked_at';
     const csv = [head, ...(data ?? []).map((r: any) => head.split(',').map((k) => r[k] ?? '').join(','))].join('\n');
     const a = document.createElement('a');

@@ -2,7 +2,7 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonInput, IonItem, IonList, IonTitle, IonToolbar } from '@ionic/angular';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -25,18 +25,18 @@ import { Ui } from '../core/ui';
   </ion-content>`,
 })
 export default class QuickPage {
-  private supa = inject(Supa);
+  private api = inject(Api);
   private outbox = inject(Outbox);
   private router = inject(Router);
   private ui = inject(Ui);
   t = inject(I18n).t;
-  parties = this.supa.parties;
+  parties = this.api.parties;
   votes: Record<string, number | null> = {};
 
   async send() {
     const v = Object.fromEntries(Object.entries(this.votes).filter(([, n]) => n !== null && n !== undefined).map(([k, n]) => [k, Number(n)]));
     if (!Object.keys(v).length) { await this.ui.error('Enter at least one party'); return; }
-    await this.outbox.add('quick', { pu: this.supa.me()!.area_code, votes: v }, 'Quick count');
+    await this.outbox.add('quick', { pu: this.api.me()!.area_code, votes: v }, 'Quick count');
     await this.ui.toast('Quick count saved');
     await this.router.navigateByUrl('/');
   }

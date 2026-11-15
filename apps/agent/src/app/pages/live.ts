@@ -1,7 +1,7 @@
 import { Component, ElementRef, OnDestroy, inject, input, signal, viewChild } from '@angular/core';
 import { Router } from '@angular/router';
 import { IonButton, IonContent, IonHeader, IonTitle, IonToolbar } from '@ionic/angular';
-import { Supa } from '../core/supa';
+import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
 /**
@@ -30,7 +30,7 @@ import { Ui } from '../core/ui';
 })
 export default class LivePage implements OnDestroy {
   id = input.required<string>();
-  private supa = inject(Supa);
+  private api = inject(Api);
   private ui = inject(Ui);
   private router = inject(Router);
   private preview = viewChild.required<ElementRef<HTMLVideoElement>>('preview');
@@ -41,9 +41,9 @@ export default class LivePage implements OnDestroy {
 
   async goLive() {
     try {
-      await this.supa.rpc('answer_live_view', { p_id: this.id(), p_accept: true, p_mode: 'live' }).catch(() => {});
+      await this.api.post(`/live-view/${this.id()}/answer`, { accept: true, mode: 'live' }).catch(() => {});
       const { Room, createLocalVideoTrack, VideoPresets } = await import('livekit-client');
-      const { url, token } = await this.supa.fn<{ url: string; token: string }>('live-view', { action: 'publish', request_id: this.id() });
+      const { url, token } = await this.api.post<{ url: string; token: string }>(`/live-view/${this.id()}/publish-token`);
       const track = await createLocalVideoTrack({ facingMode: 'environment', resolution: VideoPresets.h360.resolution });
       track.attach(this.preview().nativeElement);
       this.room = new Room({ adaptiveStream: false, dynacast: false });
@@ -59,7 +59,7 @@ export default class LivePage implements OnDestroy {
 
   async recordClip() {
     try {
-      await this.supa.rpc('answer_live_view', { p_id: this.id(), p_accept: true, p_mode: 'clip' }).catch(() => {});
+      await this.api.post(`/live-view/${this.id()}/answer`, { accept: true, mode: 'clip' }).catch(() => {});
       this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 480 }, audio: true });
       this.preview().nativeElement.srcObject = this.stream;
       const rec = new MediaRecorder(this.stream, { videoBitsPerSecond: 250_000 });
@@ -73,11 +73,8 @@ export default class LivePage implements OnDestroy {
       this.stream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(chunks, { type: rec.mimeType || 'video/webm' });
       this.state.set('Uploading clip…');
-      const me = this.supa.me()!;
-      const path = `${me.tenant_id}/live/${this.id()}.webm`;
-      const { error } = await this.supa.client.storage.from('live-clips').upload(path, blob, { contentType: blob.type, upsert: true });
-      if (error) throw new Error(error.message);
-      await this.supa.fn('live-view', { action: 'end', request_id: this.id(), media_path: path });
+      const path = await this.api.upload('live_clip', blob, blob.type.includes('mp4') ? 'mp4' : 'webm');
+      await this.api.post(`/live-view/${this.id()}/end`, { mediaPath: path });
       await this.ui.toast('Clip sent to the situation room');
       await this.router.navigateByUrl('/');
     } catch (e) { await this.ui.error(e); this.mode.set('choose'); }
@@ -85,12 +82,12 @@ export default class LivePage implements OnDestroy {
 
   async stop() {
     await this.room?.disconnect();
-    await this.supa.fn('live-view', { action: 'end', request_id: this.id() }).catch(() => {});
+    await this.api.post(`/live-view/${this.id()}/end`, {}).catch(() => {});
     await this.router.navigateByUrl('/');
   }
 
   async decline() {
-    await this.supa.rpc('answer_live_view', { p_id: this.id(), p_accept: false }).catch(() => {});
+    await this.api.post(`/live-view/${this.id()}/answer`, { accept: false }).catch(() => {});
     await this.router.navigateByUrl('/');
   }
 

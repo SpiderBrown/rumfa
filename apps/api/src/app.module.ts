@@ -27,7 +27,8 @@ class HealthController {
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+    // Tests never read .env: it may point at a real database (see test/setup.ts)
+    ConfigModule.forRoot({ isGlobal: true, load: [configuration], ignoreEnvFile: process.env.NODE_ENV === 'test' }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 600 }]),
     DatabaseModule,
     CommonModule,

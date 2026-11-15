@@ -19,20 +19,20 @@ export class Db {
     return this.run(async (qr) => {
       await qr.query(`select set_config('app.user_id', $1, true), set_config('app.tenant_id', $2, true)`, [user.sub, user.tid]);
       await qr.query('set local role rumfa_api');
-      return fn((sql, params) => qr.query(sql, params));
+      return fn(async (sql, params) => rows(await qr.query(sql, params)));
     });
   }
 
   async system<T = any>(sql: string, params?: unknown[]): Promise<T[]> {
     try {
-      return await this.ds.query(sql, params);
+      return rows(await this.ds.query(sql, params));
     } catch (e) {
       throw mapDbError(e);
     }
   }
 
   async systemTx<T>(fn: (q: Query) => Promise<T>): Promise<T> {
-    return this.run((qr) => fn((sql, params) => qr.query(sql, params)));
+    return this.run((qr) => fn(async (sql, params) => rows(await qr.query(sql, params))));
   }
 
   private async run<T>(fn: (qr: QueryRunner) => Promise<T>): Promise<T> {
@@ -52,6 +52,11 @@ export class Db {
   }
 }
 
+/** TypeORM returns [rows, affectedCount] for UPDATE/DELETE; callers always get the rows. */
+function rows(r: any): any[] {
+  return Array.isArray(r) && r.length === 2 && Array.isArray(r[0]) && typeof r[1] === 'number' ? r[0] : r;
+}
+
 /** Database errors → HTTP errors. Business rules in SQL raise plain exceptions with a readable message. */
 export function mapDbError(e: any): unknown {
   const code: string | undefined = e?.code ?? e?.driverError?.code;
@@ -60,6 +65,7 @@ export function mapDbError(e: any): unknown {
   if (code === '42501') return new ForbiddenException('Not allowed');
   if (code === '23505') return new ConflictException('Already exists');
   if (code === '23503') return new BadRequestException('Refers to a record that does not exist');
+  if (code === '23502') return new BadRequestException('A required value is missing');
   if (code === 'P0002') return new NotFoundException(msg);
   if (code === 'P0001' || code.startsWith('22') || code === '23514') return new BadRequestException(msg);
   return e;

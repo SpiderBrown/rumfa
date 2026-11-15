@@ -6,9 +6,10 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { DataSource } from 'typeorm';
 import { AuthModule } from './auth/auth.module';
 import { Public } from './auth/decorators';
-import { CasesController } from './cases/cases.controller';
+import { CommonModule } from './common/common.module';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
+import { DomainModule } from './domain/domain.module';
 
 @ApiTags('Health')
 @Controller('health')
@@ -27,9 +28,11 @@ class HealthController {
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 600 }]),
     DatabaseModule,
+    CommonModule,
     AuthModule,
+    DomainModule,
   ],
-  controllers: [HealthController, CasesController],
+  controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

@@ -1,6 +1,7 @@
 -- Grants for rumfa_api (user requests through the NestJS API) and the
--- Supabase lockdown. Keep this migration last; later migrations that add
--- tables or functions get the same treatment from the default privileges.
+-- Supabase lockdown. Tables and functions added by later migrations get the
+-- same grants through the default privileges set here; a later migration
+-- only needs explicit revokes for owner-only objects.
 
 grant select, insert, update, delete on all tables in schema public to rumfa_api;
 grant usage, select on all sequences in schema public to rumfa_api;

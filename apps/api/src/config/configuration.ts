@@ -22,6 +22,8 @@ export default function configuration() {
   if (env === 'production') {
     if (otpMode !== 'sms') throw new Error(`OTP_MODE=${otpMode} is not allowed in production`);
     if (jwtSecret.length < 32 || jwtSecret.startsWith('dev-only')) throw new Error('Set a JWT_SECRET of at least 32 characters');
+    if ((process.env.WEBHOOK_KEY ?? '').length < 24) throw new Error('Set a WEBHOOK_KEY of at least 24 characters');
+    if ((process.env.STORAGE_DRIVER ?? 'supabase') === 'local') throw new Error('STORAGE_DRIVER=local is for development only');
   }
   return {
     env,
@@ -52,15 +54,40 @@ export default function configuration() {
       maxPinFails: 5,
       totpIssuer: process.env.TOTP_ISSUER ?? 'Rumfa',
     },
+    /** Public base URL of this API (used in callback URLs given to providers) */
+    publicUrl: (process.env.API_PUBLIC_URL ?? `http://localhost:${int(process.env.PORT, 3000)}`).replace(/\/+$/, ''),
     at: {
       username: process.env.AT_USERNAME ?? 'sandbox',
       apiKey: process.env.AT_API_KEY ?? '',
       senderId: process.env.AT_SENDER_ID || undefined,
+      voiceNumber: process.env.AT_VOICE_NUMBER ?? '',
     },
     whatsapp: {
       token: process.env.WHATSAPP_TOKEN ?? '',
       phoneId: process.env.WHATSAPP_PHONE_ID ?? '',
       codeTemplate: process.env.WHATSAPP_CODE_TEMPLATE ?? 'rumfa_code',
+      appSecret: process.env.WHATSAPP_APP_SECRET ?? '',
+      verifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? '',
+    },
+    vtpass: {
+      baseUrl: process.env.VTPASS_BASE_URL ?? 'https://sandbox.vtpass.com/api',
+      apiKey: process.env.VTPASS_API_KEY ?? '',
+      secretKey: process.env.VTPASS_SECRET_KEY ?? '',
+    },
+    livekit: {
+      url: process.env.LIVEKIT_URL ?? '',
+      apiKey: process.env.LIVEKIT_API_KEY ?? '',
+      apiSecret: process.env.LIVEKIT_API_SECRET ?? '',
+    },
+    storage: {
+      /** supabase: private Supabase Storage buckets via the service key. local: files on disk (development, tests). */
+      driver: (process.env.STORAGE_DRIVER ?? (process.env.SUPABASE_URL ? 'supabase' : 'local')) as 'supabase' | 'local',
+      supabaseUrl: (process.env.SUPABASE_URL ?? '').replace(/\/+$/, ''),
+      serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+      localDir: process.env.STORAGE_DIR ?? '.storage',
+      uploadTtlSeconds: 600,
+      viewTtlSeconds: 300,
+      maxUploadBytes: int(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
     },
     webhookKey: process.env.WEBHOOK_KEY ?? '',
   };

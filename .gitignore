@@ -3,8 +3,7 @@ dist/
 .angular/
 .env
 *.env.local
-supabase/.temp/
-supabase/functions/.env
+apps/api/.storage/
 apps/agent/android/
 apps/agent/ios/
 .DS_Store

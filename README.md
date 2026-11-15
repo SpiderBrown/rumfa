@@ -13,45 +13,45 @@ Each client (tenant) has its own short name in `tenants.settings.brand`, for exa
 
 Design: *Rumfa Platform: Software Design Document* (Claude Docs). Sections 9 and 16 describe the backend.
 
-## Architecture (target)
+## Architecture
 
-The backend is being moved to a **NestJS API in front of everything**. This repository still holds the earlier Supabase-first version (described under Layout below) until that migration is done.
+**One NestJS API (`apps/api`) is the only way in.** The apps never talk to Supabase; Supabase is the Postgres host (and private file storage) behind the API, as in the dares-pue backend.
 
-- **One NestJS API for every client.** Apps never talk to Supabase. The API handles sign-in, access control (tenant, role, area), validation, rate limits, the audit log, live updates (Socket.IO) and provider webhooks.
-- **Supabase as the database host only**, as in the dares-pue backend: NestJS (TypeORM) connects through the Session pooler `DATABASE_URL`. Supabase's Data API, Auth, Realtime and Edge Functions are not used, and the Data API is locked (row-level security with no policies for `anon`/`authenticated`, `public` removed from exposed schemas). Supabase Storage stays as a private bucket that only the API uses, through signed links.
-- **Tenant isolation:** the tenant comes from the sign-in token. NestJS filters every query by it, and Postgres repeats the check as a backstop (`rumfa_api` role without bypass, `app.tenant_id` set per transaction, one tenant policy per table).
-- **Sign-in:** field users activate each phone once (SMS code, WhatsApp code or coordinator activation code, chosen per client), then use phone + PIN. Dashboard staff use email + password, with an authenticator code for supervisors and admins. `OTP_MODE=console|fixed` for development.
-- **People in several clients:** one `Identity` per phone, one `Membership` per client; the app asks which client to work for, and every token carries one tenant only.
-- **Per-client dashboards:** the same Angular build on each client's domain with its own config (API address, tenant, brand). One Rumfa Agent app serves all clients.
-- **Worker:** a second NestJS entry point running pg-boss queues in the same Postgres (IReV, OCR, notifications, top-ups, dialer, escalation timers). No Redis.
+- **Database:** NestJS (TypeORM, `pg`) connects through the Supabase Session pooler `DATABASE_URL`, or a local Postgres. The SQL in `db/migrations/` is applied as TypeORM migrations when the API starts.
+- **Business rules stay in SQL,** as tested database functions (case merging, routing, assignment, escalation, three-source verification, callbacks, contacts, top-ups). The API validates input, checks the role, then calls them inside the request's transaction.
+- **Tenant isolation:** the tenant comes from the sign-in token. Every user request runs in a transaction that sets `app.user_id` / `app.tenant_id` and switches to the `rumfa_api` role, which cannot bypass row-level security; the API also scopes its queries. Webhooks and sign-in run as the owner and check things in code.
+- **Supabase locked down:** `anon` and `authenticated` get no grants; Supabase Auth, Realtime, Edge Functions and pg_cron are not used. Storage buckets are private and reached only through short-lived links the API issues.
+- **Sign-in:** field users activate each phone once (SMS code, WhatsApp code or coordinator activation code, chosen per client), then use phone + PIN. Staff use email + password, with an authenticator code for supervisors and admins. One identity can work for several clients; each token carries one.
+- **Per-client dashboards:** the same Angular build on each client's domain with its own config; one Rumfa Agent app for all clients.
 
-| Today | Becomes |
+Migration status:
+
+| Part | Status |
 |---|---|
-| `supabase/migrations/` SQL rules and RLS | TypeORM migrations; rules move into NestJS services (race-sensitive steps stay as SQL inside them); RLS reduced to the tenant backstop |
-| `supabase/functions/` Edge Functions | NestJS controllers (`/auth`, `/calls`, `/live-view`, `/media`, `/webhooks/...`) |
-| `worker/` | NestJS worker (pg-boss) |
-| Supabase Auth phone OTP | NestJS auth (activation + PIN, staff password + authenticator) |
-| Supabase Realtime | NestJS Socket.IO gateway with Postgres `NOTIFY` |
-| `supabase/tests/` scenarios | Jest tests against a test database, plus a cross-tenant test suite |
-| `apps/*` Supabase client | Generated OpenAPI client + Socket.IO |
+| Database: identities, sign-in tables, `rumfa_api` role, lockdown | Done (`db/`) |
+| API: sign-in, people, cases, field reports, results, IReV, callbacks, contacts, messages, shifts, top-ups, voice, live view, calls, file links | Done (`apps/api`) |
+| Webhooks: SMS fallback, voice, WhatsApp, VTpass, LiveKit | Done (`/api/v1/webhooks/...`); Edge Functions removed |
+| Live updates (Socket.IO + Postgres `NOTIFY`) | Not yet |
+| Worker as a NestJS entry point with pg-boss (`worker/` still uses the Supabase client) | Not yet |
+| Apps switched from the Supabase client to the API | Not yet: **the apps do not work until this is done** |
 
-## Layout (current code, Supabase-first)
+## Layout
 
 | Folder | What it is |
 |---|---|
-| `shared/` | Dependency-free TypeScript used everywhere: SMS fallback codec, incident categories, deadlines, result checks, phone and polling-unit code helpers |
-| `supabase/migrations/` | Postgres schema, row-level security, and all business rules as SQL functions (case merging, routing, assignment, escalation, three-source verification, callbacks, contacts, top-ups, dashboard read APIs) |
-| `supabase/functions/` | Edge Functions (Deno): `sms-inbound` (SMS fallback webhook), `calls` (click-to-call, bridged callbacks), `voice-events` (Africa's Talking voice webhook, robocall playback and opt-out), `live-view` (LiveKit tokens), `media-url` (signed URLs) |
-| `supabase/tests/` | Database tests that run on plain local Postgres |
-| `worker/` | Node service: IReV fetch jobs, duplicate-sheet detection, OCR, trend check, notifications (push, SMS, WhatsApp), top-ups (VTpass, Africa's Talking), voice dialer, import scripts |
-| `apps/dashboard/` | Angular Material situation room: queue, cases, callbacks, live results, IReV data manager, sheet review, contacts, people, shifts, top-ups, voice outreach |
-| `apps/agent/` | Ionic + Capacitor mobile app: check-in, checklist, incidents and SOS, quick count, EC8A result with photo, offline queue with SMS fallback, callback requests, messages, live view, coordinator tools |
+| `shared/` | Dependency-free TypeScript used everywhere: SMS fallback codec, incident categories, deadlines, result checks, phone and polling-unit code helpers (copied into the API by `scripts/sync-shared.sh`) |
+| `db/migrations/` | Postgres schema, row-level security, sign-in tables and all business rules as SQL functions |
+| `db/tests/` | Database scenario tests on plain local Postgres |
+| `apps/api/` | NestJS API: sign-in, guards, REST endpoints (docs at `/api/docs`), webhooks, file links |
+| `worker/` | Node service: IReV fetch jobs, duplicate-sheet detection, OCR, trend check, notifications, top-ups, voice dialer, import scripts |
+| `apps/dashboard/` | Angular Material situation room (Rumfa Room) |
+| `apps/agent/` | Ionic + Capacitor mobile app (Rumfa Agent) |
 | `legacy/` | Earlier prototype server, not used |
 
 ## Requirements
 
 - Node 24.15 or newer (Angular 22). On macOS 13, set `NG_BUILD_SASS_EMBEDDED=0` (already in the app `build`/`start` scripts) because the native Dart Sass binary needs macOS 14.
-- A Supabase project (Postgres 15+). For local development, the Supabase CLI with Docker.
+- A Supabase project (Postgres 15+) as the database host, or any Postgres. Local development and tests use a local Postgres.
 - Accounts: Africa's Talking (SMS sender ID, short code or long number, voice number), Firebase (push), LiveKit or Agora (live view), VTpass (top-ups), WhatsApp Business (notifications), an OCR provider (Google Vision or Azure Document Intelligence).
 
 ## Run the API (NestJS)
@@ -74,21 +74,19 @@ npm test
 
 This runs the shared codec tests, the worker tests (including duplicate-sheet detection on the real IReV samples in `samples/`), the database scenario tests (`db/tests/run.sh`) and the API end-to-end tests (`apps/api`, a fresh `rumfa_e2e` database per run). The last two need a local Postgres with `createdb`.
 
-## Set up a Supabase project
+## Set up Supabase as the database host
 
-```bash
-supabase link --project-ref <ref>
-supabase db push
-supabase secrets set --env-file supabase/functions/.env
-supabase functions deploy sms-inbound voice-events calls live-view media-url
-```
+1. Create the project; copy the **Session pooler** connection string into the API's `DATABASE_URL`, and the project URL and service-role key into `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (server only).
+2. Start the API once: it applies `db/migrations/` (roles, schema, lockdown, storage buckets).
+3. In the Supabase dashboard: under Data API remove `public` from the exposed schemas; under Authentication disable sign-ups. Nothing else of Supabase is used.
 
-Then in the Supabase dashboard: enable phone sign-in with an SMS provider, and enable the `pg_cron` extension (the timers in migration `…0800_platform.sql` are scheduled only when it exists; the worker also runs them every 20 seconds).
+Provider callback URLs (all carry the webhook key):
 
-Africa's Talking callback URLs:
-
-- Incoming SMS: `https://<ref>.supabase.co/functions/v1/sms-inbound?key=<WEBHOOK_KEY>`
-- Voice callback: `https://<ref>.supabase.co/functions/v1/voice-events?key=<WEBHOOK_KEY>`
+- Africa's Talking incoming SMS: `https://<api-host>/api/v1/webhooks/at/sms?key=<WEBHOOK_KEY>`
+- Africa's Talking voice callback: `https://<api-host>/api/v1/webhooks/at/voice?key=<WEBHOOK_KEY>`
+- WhatsApp: `https://<api-host>/api/v1/webhooks/whatsapp?key=<WEBHOOK_KEY>` (also checks `X-Hub-Signature-256`)
+- VTpass: `https://<api-host>/api/v1/webhooks/vtpass?key=<WEBHOOK_KEY>`
+- LiveKit: `https://<api-host>/api/v1/webhooks/livekit?key=<WEBHOOK_KEY>` (also checks LiveKit's signature)
 
 ## Load reference data and people
 
@@ -103,7 +101,7 @@ npm run build:sample -- --tenant <id> --election <id> --size 1500
 npm start                                             # the worker itself
 ```
 
-The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `supabase/seed.sql` shows the shape (it is development data, do not run it in production).
+The first tenant (with `settings.brand`), its queues (national, security, legal, helpdesk, one per state) and its admins are created with SQL; `db/seed.sql` shows the shape (it is development data, do not run it in production).
 
 ## Run the apps
 
@@ -118,13 +116,13 @@ cd apps/agent && npx cap add android && npm run android   # Android build
 ## What is verified and what is not
 
 Verified here:
-- 18 groups of database scenario tests pass (merging, routing, auto-assignment by language, acknowledgement and resolution escalation, supervisor merge and undo, three-source mismatch alerts, callback escalation chain, contact approval rules, two-admin top-up approval, row-level security, service-only functions, dashboard read APIs).
+- 20 API end-to-end tests pass on a fresh database: every sign-in flow, two clients sharing one person, refresh-token reuse, activation codes, PIN lockout, staff sign-in with authenticator, the case flow (including critical cases waiting for a supervisor), EC8A photo upload and view links, callbacks, people, coded SMS routed by agent code, bridged voice calls, case messages, top-up approval, and client B seeing nothing of client A.
+- 20 groups of database scenario tests pass (merging, routing, auto-assignment by language, acknowledgement and resolution escalation, supervisor merge and undo, three-source mismatch alerts, callback escalation chain, contact approval rules, two-admin top-up approval, row-level security, service-only functions, dashboard read APIs, two clients sharing one person, and the lockdown of credentials and Supabase's roles).
 - Shared and worker unit tests pass, including the SMS codec and duplicate detection on real 2023 IReV sheets (units 19-28-02-003 and 19-28-02-005 carry the same photo).
-- Both Angular apps build; Edge Functions pass `deno check`.
-- Agent app in a phone-sized browser: sign-in, PIN lock, home, EC8A result entry and review, offline queue with "Send by SMS".
+- The API builds and boots on an empty database, applying all migrations.
 
 Not yet verified (needs real accounts or a Supabase project):
-- Supabase Auth OTP, Realtime, Storage policies and pg_cron on a live project.
+- The API against a live Supabase project (Session pooler, Storage signed links).
 - Africa's Talking calls, SMS and airtime; LiveKit live view; FCM push; VTpass; WhatsApp; OCR providers.
 - The EC8A OCR parser against real 2027 sheets (tune once INEC releases the form).
 - The Android build (Capacitor platform not added yet) and testing on low-end phones.

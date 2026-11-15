@@ -22,10 +22,25 @@ export async function createTestApp(): Promise<{ app: INestApplication; ds: Data
   const { AppModule } = await import('../src/app.module');
   const { setupApp } = await import('../src/setup-app');
   const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = mod.createNestApplication();
+  const app = mod.createNestApplication({ rawBody: true });
   setupApp(app);
   await app.init();
   const ds = app.get(DataSource);
   await ds.query(readFileSync(resolve(__dirname, '../../../db/seed.sql'), 'utf8'));
   return { app, ds };
+}
+
+/** A signed-in session for a seeded membership, without going through SMS (sign-in has its own tests). */
+export async function sessionFor(app: INestApplication, volunteerId: string): Promise<string> {
+  const ds = app.get(DataSource);
+  const [v] = await ds.query(`select phone, user_id from public.volunteers where id = $1`, [volunteerId]);
+  let identity = v.user_id;
+  if (!identity) {
+    [{ id: identity }] = await ds.query(
+      `insert into public.identities (phone) values ($1) on conflict (phone) do update set phone = excluded.phone returning id`, [v.phone]);
+    await ds.query(`select app.link_identity($1)`, [identity]);
+  }
+  const { TokensService, MEMBERSHIP_SQL } = await import('../src/auth/tokens.service');
+  const [m] = await ds.query(MEMBERSHIP_SQL + ' and v.id = $2', [identity, volunteerId]);
+  return (await app.get(TokensService).issue(identity, m, null)).accessToken;
 }

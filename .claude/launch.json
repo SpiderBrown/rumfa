@@ -30,7 +30,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd apps/api && DATABASE_URL= DB_HOST=localhost DB_SSL=false SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= DB_NAME=rumfa_dev DB_USER=$USER DB_PASSWORD= OTP_MODE=fixed FIXED_OTP=246810 STORAGE_DRIVER=local STORAGE_DIR=$TMPDIR/rumfa-dev-storage WEBHOOK_KEY=dev-webhook-key-long-enough-x node dist/main"
+        "cd apps/api && DATABASE_URL= DB_HOST=localhost DB_SSL=false SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= DB_NAME=rumfa_dev DB_USER=$USER DB_PASSWORD= OTP_MODE=fixed FIXED_OTP=246810 STORAGE_DRIVER=local STORAGE_DIR=$TMPDIR/rumfa-dev-storage WEBHOOK_KEY=dev-webhook-key-long-enough-x env $(grep ^LIVEKIT_ .env | xargs) node dist/main"
       ],
       "port": 3000
     },

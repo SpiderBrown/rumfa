@@ -239,6 +239,14 @@ export class WebhooksController {
         `update public.live_view_requests set status = 'ended', ended_at = coalesce(ended_at, now())
           where room_name = $1 and status in ('accepted','live')`, [event.room.name]);
     }
+    // App calls (rooms "call-<id>"): when someone drops out (app closed, phone died) the call ends for both,
+    // so nobody is left showing as busy. Only answered calls; a ringing caller waits for the ring time.
+    const callId = /^call-([0-9a-f-]{36})$/.exec(event.room?.name ?? '')?.[1];
+    if (callId && (event.event === 'participant_left' || event.event === 'room_finished')) {
+      await this.db.system(
+        `update public.calls set status = 'completed', ended_at = now(), duration_s = greatest(0, extract(epoch from now() - started_at))::int
+          where id = $1 and route = 'inapp' and status = 'answered'`, [callId]);
+    }
     return { ok: true };
   }
 }

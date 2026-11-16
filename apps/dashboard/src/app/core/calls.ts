@@ -91,6 +91,7 @@ export class Calls {
 
   // ---- App calls -------------------------------------------------------------------------------------
   async callApp(volunteerId: string, label: string, caseId?: string, reason?: string) {
+    try { await VoiceRoom.checkMic(); } catch (e) { this.ui.error(e); return; }
     try {
       const r = await this.api.post<{ callId: string; url: string; token: string; ringSeconds: number }>('/calls/app', { volunteerId, caseId, reason });
       this.active.set({ callId: r.callId, label, via: 'app', phase: 'calling' });
@@ -117,6 +118,8 @@ export class Calls {
   async answer() {
     const a = this.active();
     if (a?.via !== 'app' || a.phase !== 'incoming') return;
+    // Keeps ringing if the microphone is blocked, so they can allow it and answer
+    try { await VoiceRoom.checkMic(); } catch (e) { this.ui.error(e); return; }
     this.stopRinging();
     try {
       const r = await this.api.post<{ url: string; token: string }>(`/calls/app/${a.callId}/answer`);

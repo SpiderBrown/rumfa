@@ -40,6 +40,7 @@ export class Calls {
   private voice: VoiceRoom | null = null;
   private ringTimer: any = null;
   private vibrateTimer: any = null;
+  private ringer: { stop: () => void } | null = null;
   readonly active = signal<ActiveCall | null>(null);
   /** Internet calls also need the call client set up in this app's config. */
   readonly modes = computed(() => (['inapp', 'bridged', 'webrtc', 'phone'] as CallMode[])
@@ -62,6 +63,7 @@ export class Calls {
     try {
       // the call client loads first, so a number is only registered when the call can really start
       if (this.active()) { await this.ui.error('You are already on a call'); return; }
+      if (mode === 'inapp') await VoiceRoom.checkMic();
       const client = mode === 'webrtc' ? await this.loadClient() : null;
       const r = await this.api.post<{ phone?: string; callId?: string; url?: string; token?: string; ringSeconds?: number }>(
         `/channels/${channelId}/call`, { personId: who.id, mode });
@@ -103,11 +105,14 @@ export class Calls {
     this.active.set({ label: c.caller.full_name, kind: 'app', phase: 'incoming', callId });
     navigator.vibrate?.([600, 400, 600]);
     this.vibrateTimer = setInterval(() => navigator.vibrate?.([600, 400, 600]), 2000);
+    this.ringer = ring();
   }
 
   async answer() {
     const a = this.active();
     if (a?.kind !== 'app' || a.phase !== 'incoming' || !a.callId) return;
+    // Keeps ringing if the microphone is blocked, so they can allow it and answer
+    try { await VoiceRoom.checkMic(); } catch (e) { await this.ui.error(e); return; }
     this.stopRinging();
     try {
       const r = await this.api.post<{ url: string; token: string }>(`/calls/app/${a.callId}/answer`);
@@ -145,7 +150,7 @@ export class Calls {
     else if (r?.status === 'completed') await this.ui.toast('Call ended', 'medium');
   }
 
-  private stopRinging() { clearInterval(this.vibrateTimer); this.vibrateTimer = null; navigator.vibrate?.(0); }
+  private stopRinging() { clearInterval(this.vibrateTimer); this.vibrateTimer = null; navigator.vibrate?.(0); this.ringer?.stop(); this.ringer = null; }
 
   private reset() {
     clearTimeout(this.ringTimer); this.stopRinging();
@@ -178,4 +183,21 @@ export class Calls {
     const { data, role } = await sheet.onDidDismiss();
     return role === 'cancel' || typeof data !== 'number' ? null : options[data].value;
   }
+}
+
+/** A two-tone ring while a call comes in (the phone also vibrates). Same sound as the dashboard. */
+function ring(): { stop: () => void } {
+  let ctx: AudioContext | null = null;
+  try { ctx = new AudioContext(); } catch { return { stop: () => undefined }; }
+  const beep = () => {
+    for (const [f, at] of [[880, 0], [660, 0.25]] as const) {
+      const o = ctx!.createOscillator(), g = ctx!.createGain();
+      o.frequency.value = f; g.gain.value = 0.15;
+      o.connect(g).connect(ctx!.destination);
+      o.start(ctx!.currentTime + at); o.stop(ctx!.currentTime + at + 0.2);
+    }
+  };
+  beep();
+  const t = setInterval(beep, 2000);
+  return { stop: () => { clearInterval(t); void ctx?.close(); } };
 }

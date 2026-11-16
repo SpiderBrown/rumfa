@@ -17,6 +17,7 @@ export const routes: Routes = [
       { path: 'room', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
       { path: 'room/case/:id', loadComponent: () => import('./pages/room/case-detail').then((m) => m.CaseDetailPage) },
       { path: 'map', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/map').then((m) => m.MapPage) },
+      { path: 'polling-day', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/polling-day').then((m) => m.PollingDayPage) },
       { path: 'checkins', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/checkins').then((m) => m.CheckinsPage) },
       { path: 'live-count', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/live-count').then((m) => m.LiveCountPage) },
       { path: 'callbacks', loadComponent: () => import('./pages/callbacks').then((m) => m.CallbacksPage) },

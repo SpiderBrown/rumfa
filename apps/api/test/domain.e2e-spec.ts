@@ -419,6 +419,48 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.patch(api('/settings/party')).set(as(ADMIN)).send({ party: null }).expect(200);
   });
 
+  it('polling-day figures: sent stage by stage, flagged to the right desk, summed for the room', async () => {
+    const pu = '19-28-02-003';
+    const send = (stage: string, figures: Record<string, number>, clientId = uuid()) =>
+      http.post(api('/unit-figures')).set(as(AGENT3)).send({ pu, stage, figures, clientId });
+    expect((await send('setup', { registered: 650, ballots_received: 650 }).expect(200)).body).toMatchObject({ flags: [], final: false });
+    await send('accreditation', { accredited: 180 }).expect(200);
+    // A figure going down is flagged (and the same message resent changes nothing)
+    const again = uuid();
+    expect((await send('accreditation', { accredited: 150 }, again).expect(200)).body.flags.map((f: any) => f.flag)).toEqual(['accreditation_dropped']);
+    expect((await send('accreditation', { accredited: 150 }, again).expect(200)).body.flags).toEqual([]);
+    // Impossible figure: more accredited than the register -> a critical case on the legal desk
+    expect((await send('accreditation', { accredited: 700 }).expect(200)).body.flags.map((f: any) => f.flag)).toContain('over_registered');
+    const [cs] = await ds.query(`select c.severity, q.kind from public.cases c join public.queues q on q.id = c.queue_id
+                                  where c.tenant_id = $1 and c.category = 'over_registered' and c.pu_code = $2`, [T_A, pu]);
+    expect(cs).toMatchObject({ severity: 'critical', kind: 'legal' });
+    // Close of poll and result: ballots balance (650 = 2 + 8 + 290 used + 350 unused)
+    expect((await send('close', { accredited: 300, unused: 350, spoiled: 2 }).expect(200)).body.final).toBe(true);
+    const res = (await send('result', { rejected: 8, total_valid: 290 }).expect(200)).body;
+    expect(res.latest).toEqual({ registered: 650, ballots_received: 650, accredited: 300, unused: 350, spoiled: 2, rejected: 8, total_valid: 290 });
+    expect(res.flags.map((f: any) => f.flag)).not.toContain('ballots_unbalanced');
+    // Announced item 8 differing from 5 + 6 + 7 is flagged
+    expect((await send('result', { used: 310 }).expect(200)).body.flags.map((f: any) => f.flag)).toContain('used_mismatch');
+
+    // Only the agent at the unit; unknown figures refused
+    await http.post(api('/unit-figures')).set(as(AGENT4)).send({ pu, stage: 'setup', figures: { registered: 1 }, clientId: uuid() }).expect(403);
+    await send('setup', { voters: 5 }).expect(400);
+    expect((await http.get(api('/unit-figures/mine')).set(as(AGENT3)).expect(200)).body).toMatchObject({ final: true, latest: { accredited: 300 } });
+
+    // The room: turnout for the state and per LGA, and the feed with the flags; the ward coordinator for the ward
+    const sum = (await http.get(api('/unit-figures/summary')).set(as(SUP)).expect(200)).body;
+    expect(sum).toMatchObject({ area: '19', unitsReporting: 1, unitsClosed: 1, registered: 650, accredited: 300, childLevel: 'lga' });
+    expect(sum.turnout).toBeCloseTo(300 / 650);
+    expect(sum.flags).toBeGreaterThanOrEqual(2);
+    const feed = (await http.get(api('/unit-figures/feed')).set(as(SUP)).expect(200)).body;
+    expect(feed.updates[0]).toMatchObject({ pu_code: pu, stage: 'result', registered: 650 });
+    expect(feed.flags.map((f: any) => f.rule)).toEqual(expect.arrayContaining(['over_registered', 'used_mismatch', 'accreditation_dropped']));
+    expect((await http.get(api('/unit-figures/summary')).set(as(WARD)).expect(200)).body.unitsReporting).toBe(1);
+    await http.get(api('/unit-figures/summary')).set(as(WARD)).query({ area: '19' }).expect(403);
+    await http.get(api('/unit-figures/feed')).set(as(AGENT3)).expect(403);
+    expect((await http.get(api('/unit-figures/feed')).set(as('adminB')).query({ area: '19' }).expect(200)).body.updates).toEqual([]);
+  });
+
   it('two admins are needed for a top-up batch', async () => {
     const plan = await http.post(api('/topups/plans')).set(as(ADMIN)).send({ name: 'Election day airtime', kind: 'airtime', amountNgn: 500, targetRoles: ['agent'] }).expect(201);
     const b = await http.post(api('/topups/batches')).set(as(ADMIN)).send({ planId: plan.body.id }).expect(201);

@@ -102,7 +102,7 @@ export class LiveGateway implements OnGatewayConnection, OnApplicationBootstrap,
         for (const m of [e.agent_id, e.requested_by]) if (m) to.add(rooms.member(m));
         if (e.case_id) to.add(rooms.case(e.case_id));
         break;
-      case 'live_counts': case 'checkins':
+      case 'live_counts': case 'checkins': case 'unit_figure_updates':
         to.add(rooms.staff(tid));
         for (const code of chainOf(e.pu_code ?? '')) to.add(rooms.area(tid, code));
         break;

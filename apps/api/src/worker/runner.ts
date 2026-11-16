@@ -45,6 +45,7 @@ export function startWorker(ds: DataSource): { stop: () => Promise<void> } {
     every('ocr-agent', 30, () => ocrPendingAgentPhotos()),
     every('voice', 60, () => dialCampaigns()),
     every('trend', 600, () => runTrendCheck()),
+    every('figures', 300, () => q(`select public.svc_flag_missing_accreditation('11:00')`)), // checked in, no accreditation figure
     every('stale-contacts', 3600, () => q(`select app.mark_stale_contacts(7)`)),
   ];
 

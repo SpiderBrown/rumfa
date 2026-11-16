@@ -1,7 +1,5 @@
 import { Component, computed, inject } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { judgeCheckin } from '@rumfa/shared';
-import { Geolocation } from '@capacitor/geolocation';
 import { IonBadge, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonRefresher,
   IonRefresherContent, IonTitle, IonToolbar } from '@ionic/angular';
 import { Api } from '../core/api';
@@ -9,13 +7,13 @@ import { Outbox, type OutItem } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 import { Checkin } from '../core/checkin';
-import { Checklist } from '../core/checklist';
 import { Clock } from '../core/clock';
+import { UnitFiguresService } from '../core/unit-figures';
+import { CheckinFlow } from '../core/checkin-flow';
+import { DayJourney } from '../core/day';
+import { DAY_STAGES } from '../core/checklist';
 
-const PLACE: Record<string, string> = { ward: 'your ward', unit: 'your polling unit', lga: 'your LGA', state: 'your state' };
-const km = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true });
 const dayTime = (iso: string) => new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 
 /** Today: the main actions as large tiles, plus anything waiting to send. */
@@ -32,30 +30,21 @@ const dayTime = (iso: string) => new Date(iso).toLocaleString('en-GB', { weekday
     <div class="who"><b>{{ api.brand() }}</b> · {{ me()?.full_name }} · {{ me()?.area_code }}
       @if (!outbox.online()) { <span class="off">{{ t('No internet') }}</span> }</div>
 
+    @if (atUnit()) {
+      <!-- The polling-unit day: one place, in INEC's order. Shows where the agent is and what comes next. -->
+      <button class="day" (click)="router.navigateByUrl('/unit')">
+        <span class="ring">{{ day.doneStages() }}/{{ stageCount }}</span>
+        <span class="dt"><b>{{ t('My polling unit') }}</b><small>{{ dayLine() }}</small>
+          @if (day.leftBehind()) { <small class="behind">{{ day.leftBehind() }} {{ t('earlier questions unanswered') }}</small> }</span>
+        @if (figs.pendingCount()) { <span class="pend">{{ figs.pendingCount() }}</span> }
+        <ion-icon name="chevron-forward" class="chev" />
+      </button>
+    }
     <div class="big-grid">
       @if (atUnit()) {
-        <button class="tile" [class.done]="ci.checkedIn() && !ci.onlyOutside()" [class.attn]="ci.onlyOutside() || mustCheckIn()" (click)="checkIn()">
-          @if (ci.onlyOutside()) { <ion-icon name="warning" /> } @else if (ci.checkedIn()) { <ion-icon name="checkmark-circle" /> } @else { <ion-icon name="location-outline" /> }
-          {{ ci.onlyOutside() ? t('Checked in outside your area') : ci.checkedIn() ? t('Checked in') : t('Check in') }}
-          <span class="state" [class.good]="ci.checkedIn() && !ci.onlyOutside()" [class.warn]="ci.onlyOutside()">{{ checkinNote() }}</span>
-        </button>
-        <!-- Field work starts with check-in (SOS never waits) -->
-        <button class="tile" [class.done]="cl.done() === cl.total" [class.locked]="mustCheckIn()" (click)="go('/checklist')">
-          @if (cl.done() === cl.total) { <ion-icon name="checkmark-circle" /> } @else { <ion-icon name="list" /> }{{ t('Checklist') }}
-          <span class="state" [class.good]="cl.done() === cl.total" [class.warn]="cl.problems()">
-            @if (mustCheckIn()) { {{ t('Check in first') }} }
-            @else { {{ cl.done() === cl.total ? t('All done') : cl.done() + ' / ' + cl.total + ' ' + t('done') }}@if (cl.problems()) { · {{ cl.problems() }} ⚠ } }
-          </span>
-        </button>
         <button class="tile" [class.locked]="mustCheckIn()" (click)="go('/report')"><ion-icon name="warning" />{{ t('Report a problem') }}
           @if (mustCheckIn()) { <span class="state">{{ t('Check in first') }}</span> }</button>
         <a class="tile sos" routerLink="/report" [queryParams]="{ sos: 1 }"><ion-icon name="alert-circle" />{{ t('SOS') }}</a>
-        @if (api.isAgent()) {
-          <button class="tile" [class.locked]="mustCheckIn()" (click)="go('/count')"><ion-icon name="speedometer" />{{ t('Live count') }}
-            @if (mustCheckIn()) { <span class="state">{{ t('Check in first') }}</span> }</button>
-          <button class="tile" [class.locked]="mustCheckIn()" (click)="go('/result')"><ion-icon name="document-text" />{{ t('Submit result (EC8A)') }}
-            @if (mustCheckIn()) { <span class="state">{{ t('Check in first') }}</span> }</button>
-        }
       }
       <a class="tile" routerLink="/callback"><ion-icon name="call" />{{ t('Ask my coordinator to call me') }}</a>
       <a class="tile" routerLink="/messages"><ion-icon name="chatbubbles" />{{ t('Messages') }}</a>
@@ -84,6 +73,13 @@ const dayTime = (iso: string) => new Date(iso).toLocaleString('en-GB', { weekday
   styles: `.who { padding: 12px 16px 0; color: var(--ion-color-medium); } .off { color: #b3261e; font-weight: 600; margin-left: 8px; }
            .state { font-size: 12px; font-weight: 500; color: var(--ion-color-medium); margin-top: -2px; }
            .state.good { color: #0b6b3a; } .state.warn { color: #b45309; }
+           .day { display: flex; align-items: center; gap: 14px; width: calc(100% - 24px); margin: 12px 12px 0; padding: 16px; border: 0;
+             border-radius: 18px; background: var(--ion-color-primary); color: #fff; font: inherit; text-align: left; box-shadow: 0 3px 10px rgba(0,0,0,.15); }
+           .ring { width: 48px; height: 48px; border-radius: 50%; border: 3px solid rgba(255,255,255,.85); display: grid; place-items: center;
+             font-weight: 700; font-size: 14px; flex: none; }
+           .behind { color: #fde68a; } .dt { flex: 1; display: flex; flex-direction: column; }
+           .dt b { font-size: 17px; } .dt small { opacity: .9; font-size: 13px; margin-top: 2px; } .chev { font-size: 20px; }
+           .pend { background: #f59e0b; color: #111; font-weight: 700; font-size: 12px; border-radius: 10px; padding: 1px 7px; }
            .tile.locked { opacity: .55; } .tile.attn { outline: 2px solid #d97706; outline-offset: -2px; }
            button.tile { border: none; font-family: inherit; font-size: inherit; cursor: pointer; } a.tile { text-decoration: none; }`,
 })
@@ -95,24 +91,28 @@ export default class HomePage {
   me = this.api.me;
   atUnit = this.api.atUnit;
   ci = inject(Checkin);
-  cl = inject(Checklist);
   private clock = inject(Clock);
-  private router = inject(Router);
+  router = inject(Router);
+  private flow = inject(CheckinFlow);
+  figs = inject(UnitFiguresService);
+  day = inject(DayJourney);
+  stageCount = DAY_STAGES.length;
+  /** Under "My polling unit": the stage now, and its next step */
+  dayLine = computed(() => {
+    this.clock.min();
+    if (!this.ci.checkedIn()) {
+      const o = this.ci.openNow(), w = this.ci.state().window;
+      return o === 'early' && w ? `${this.t('Check-in opens')} ${dayTime(w.opensAt)}` : this.t('Start here: check in at your polling unit');
+    }
+    const c = this.day.current();
+    if (!c) return this.t('All done for today. Thank you!');
+    const st = DAY_STAGES.find((s) => s.id === c)!;
+    const l = this.figs.latest();
+    const extra = c === 'voting' && l.accredited != null && l.registered ? ` · ${l.accredited} ${this.t('accredited')} (${Math.round((l.accredited / l.registered) * 100)}%)` : '';
+    return `${this.t('Now')}: ${this.t(st.title)}${extra}`;
+  });
   /** At a polling unit and not checked in while check-in is open (or opening later today): field work waits */
   mustCheckIn = computed(() => { this.clock.min(); this.ci.state(); return this.atUnit() && this.ci.required(); });
-  /** Under the Check in tile: the arrival time, or when check-in opens */
-  checkinNote = computed(() => {
-    this.clock.min();
-    const s = this.ci.state();
-    if (this.ci.onlyOutside()) return this.t('Tap to check in again from your area');
-    if (s.first) return this.t('at') + ' ' + time(s.arrival ?? s.first);
-    const w = s.window;
-    if (!w || w.anyDay) return '';
-    if (Date.now() < Date.parse(w.opensAt)) return this.t('Opens') + ' ' + dayTime(w.opensAt);
-    if (Date.now() >= Date.parse(w.closesAt)) return this.t('Closed');
-    return this.t('Open now');
-  });
-
   statusText = (i: OutItem) => {
     this.clock.min();
     if (i.status === 'sent') return i.smsSentAt ? 'Sent by SMS' : 'Sent';
@@ -132,50 +132,7 @@ export default class HomePage {
     await this.router.navigateByUrl(path);
   }
 
-  /** Returns true when a check-in was recorded. */
-  async checkIn(): Promise<boolean> {
-    const open = this.ci.openNow();
-    const s = this.ci.state();
-    if (open === 'early' && s.window) {
-      await this.ui.alert('Not yet', `${this.t('Check-in opens at')} ${dayTime(s.window.opensAt)} ${this.t('on election day. Check in when you reach your polling unit.')}`);
-      return false;
-    }
-    if (open === 'closed') { await this.ui.alert('Check-in has closed', 'Check-in is closed for this election.'); return false; }
-    const ok = this.ci.onlyOutside()
-      ? await this.ui.confirm('Check in again?', 'Your last check-in was outside your area. Check in again now that you are there. The earlier one is kept.', 'Check in again', 'Cancel')
-      : s.first
-        ? await this.ui.confirm('Check in again?', `${this.t('You checked in at')} ${time(s.arrival ?? s.first)}. ${this.t('Only check in again if you left and came back, or your unit moved to a new place.')}`, 'Check in again', 'Cancel')
-        : await this.ui.confirm('Check in now?', `${this.t('Only check in when you are at your polling unit')} (${this.me()!.area_code}). ${this.t('The situation room sees the time and your location.')}`, 'I am here', 'Cancel');
-    if (!ok) return false;
-    const at = new Date();
-    let pos: { lat?: number; lng?: number; accuracy?: number } = {};
-    try {
-      const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 });
-      pos = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
-    } catch { /* no location: asked for a reason below */ }
-
-    // Within their own area? (the server checks again). Outside, or no location: allowed, with a reason
-    const fence = s.fence ?? null;
-    const j = judgeCheckin(fence, pos);
-    let note: string | null = null;
-    if (fence && pos.lat == null) {
-      note = await this.ui.prompt('No location', 'We could not get your location. Turn on location and try again, or check in now and say why.',
-        { placeholder: 'Reason', ok: 'Check in anyway', required: true });
-      if (note === null) return false;
-    } else if (j.inside === false) {
-      const where = `${fence!.name} (${this.t(PLACE[fence!.level])})`;
-      const away = j.distance != null ? ` ${this.t('about')} ${km(j.distance)} ${this.t('from it')}` : '';
-      note = await this.ui.prompt('Outside your area',
-        `${this.t('You seem to be outside')} ${where}${away}. ${this.t('You can still check in, but tell the situation room why (for example, the unit was moved).')}`,
-        { placeholder: 'Reason', ok: 'Check in anyway', required: true });
-      if (note === null) return false;
-    }
-    await this.outbox.add('checkin', { pu: this.me()!.area_code, ...pos, at: at.toISOString(), note }, 'Check in');
-    this.ci.recorded(at, j.inside);
-    await this.ui.toast(j.inside === false ? 'Checked in outside your area. Check in again when you get there.' : 'Checked in',
-      j.inside === false ? 'medium' : 'success');
-    return true;
-  }
+  async checkIn() { return this.flow.run(); }
 
   async sms(i: OutItem) { await this.outbox.sendBySms(i); }
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   encodeResultSms, encodeIncidentSms, encodeCallbackSms, decodeSms, SmsDecodeError,
   checkResult, diffResults, normaliseNgPhone, normalisePuCode, areaAt,
-  pointInGeometry, judgeCheckin, type Geo, type CheckinFence, placeName,
+  pointInGeometry, judgeCheckin, type Geo, type CheckinFence, placeName, figureFlags, usedBallots, type UnitFigures,
 } from '../src/index.ts';
 
 const figs = { registered: 607, accredited: 265, rejected: 0, totalValid: 265, votes: { APC: 83, NNPP: 149, PDP: 32, ADP: 1 } };
@@ -93,4 +93,22 @@ test('place names read well', () => {
   assert.equal(placeName('FEDERAL CAPITAL TERRITORY'), 'Federal Capital Territory');
   assert.equal(placeName("  DAN'AGUNDI  "), "Dan'agundi");
   assert.equal(placeName(null), '');
+});
+
+test('polling-day figures: flags for impossible figures, unbalanced ballots and turnout', () => {
+  const flags = (f: UnitFigures, o?: Parameters<typeof figureFlags>[1]) => figureFlags(f, o).map((x) => x.flag);
+  assert.deepEqual(flags({ registered: 650, accredited: 700 }), ['over_registered']);
+  assert.deepEqual(flags({ registered: 650, ballots_received: 650, accredited: 300, unused: 350, spoiled: 2, rejected: 8, total_valid: 290 }), []);
+  assert.equal(usedBallots({ spoiled: 2, rejected: 8, total_valid: 290 }), 300);
+  assert.deepEqual(flags({ ballots_received: 650, unused: 300, spoiled: 2, rejected: 8, total_valid: 290 }), ['ballots_unbalanced']);
+  assert.deepEqual(flags({ spoiled: 2, rejected: 8, total_valid: 290, used: 310 }), ['used_mismatch']);
+  assert.deepEqual(flags({ accredited: 280, rejected: 8, total_valid: 290 }), ['over_accredited']);
+  assert.deepEqual(flags({ accredited: 150 }, { previousAccredited: 180 }), ['accreditation_dropped']);
+  // Turnout flags only once accreditation has closed
+  assert.deepEqual(flags({ registered: 600, accredited: 40 }), []);
+  assert.deepEqual(flags({ registered: 600, accredited: 40 }, { final: true }), ['low_turnout']);
+  assert.deepEqual(flags({ registered: 600, accredited: 580 }, { final: true }), ['very_high_turnout']);
+  assert.deepEqual(flags({ registered: 600, accredited: 120 }, { final: true, baseline: { turnout: 0.5, ownShare: 0.7 } }), ['stronghold_low_turnout']);
+  assert.deepEqual(flags({ registered: 600, accredited: 120 }, { final: true, baseline: { turnout: 0.5, ownShare: 0.3 } }), []);
+  assert.deepEqual(flags({ registered: 30, accredited: 1 }, { final: true }), []); // tiny units are not judged on turnout
 });

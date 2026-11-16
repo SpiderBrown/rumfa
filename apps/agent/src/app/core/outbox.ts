@@ -9,7 +9,7 @@ import { Api, ApiError } from './api';
  * also go by SMS: the app builds the coded message from the saved form, so the
  * agent never types it.
  */
-export type ItemKind = 'incident' | 'result' | 'callback' | 'checkin' | 'checklist' | 'quick' | 'message';
+export type ItemKind = 'incident' | 'result' | 'callback' | 'checkin' | 'checklist' | 'quick' | 'message' | 'figures';
 export interface OutItem {
   id: string;                 // client_id, makes server writes idempotent
   kind: ItemKind;
@@ -168,6 +168,9 @@ export class Outbox {
         return;
       case 'checklist':
         await this.api.put('/checklist', { pu: p['pu'], item: p['item'], answer: p['answer'], clientId });
+        return;
+      case 'figures':
+        await this.api.post('/unit-figures', { pu: p['pu'], stage: p['stage'], figures: p['figures'], at: p['at'] ?? new Date(i.createdAt).toISOString(), clientId });
         return;
       case 'quick':
         await this.api.post('/quick-tallies', { pu: p['pu'], votes: p['votes'], clientId });

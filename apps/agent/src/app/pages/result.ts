@@ -3,12 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader, IonNote,
   IonProgressBar, IonTitle, IonToolbar } from '@ionic/angular';
-import { checkResult, type ResultFigures } from '@rumfa/shared';
+import { UNIT_FIGURE_ITEMS, checkResult, figureFlags, usedBallots, type ResultFigures, type UnitFigures } from '@rumfa/shared';
 import { Api } from '../core/api';
 import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 import { takePhoto } from '../core/photo';
+import { UnitFiguresService } from '../core/unit-figures';
 
 /**
  * EC8A result in four steps (one screen each because the form is long):
@@ -28,9 +29,18 @@ import { takePhoto } from '../core/photo';
     <p class="hint">Polling unit {{ pu }} · copy the figures exactly as written on the signed sheet.</p>
     @switch (step()) {
       @case (0) {
+        @if (prefilled) { <p class="hint ok">{{ t('Figures you already sent are filled in. Check them against the sheet.') }}</p> }
         <ion-list>
           @for (f of header; track f.key) {
-            <ion-item><ion-input class="num" type="number" inputmode="numeric" min="0" [label]="t(f.label)" labelPlacement="stacked" [(ngModel)]="figs[f.key]" (ngModelChange)="bump()" /></ion-item>
+            <ion-item><ion-input class="num" type="number" inputmode="numeric" min="0" [label]="t('Item') + ' ' + f.item + ' · ' + t(f.label)" labelPlacement="stacked" [(ngModel)]="figs[f.key]" (ngModelChange)="bump()" /></ion-item>
+          }
+          <ion-item>
+            <ion-label class="ion-text-wrap">{{ t('Item') }} 8 · {{ t('Total used ballot papers') }}
+              <p>{{ t('Spoiled + rejected + valid') }} = <b>{{ used() ?? '…' }}</b></p></ion-label>
+            <ion-button slot="end" fill="clear" size="small" (click)="usedDiffers = !usedDiffers; bump()">{{ usedDiffers ? t('Same as sheet') : t('Sheet differs') }}</ion-button>
+          </ion-item>
+          @if (usedDiffers) {
+            <ion-item><ion-input class="num" type="number" inputmode="numeric" min="0" [label]="t('Item 8 as written on the sheet')" labelPlacement="stacked" [(ngModel)]="figs['used']" (ngModelChange)="bump()" /></ion-item>
           }
         </ion-list>
       }
@@ -50,10 +60,12 @@ import { takePhoto } from '../core/photo';
       }
       @case (3) {
         <ion-list>
-          @for (f of header; track f.key) { <ion-item><ion-label>{{ t(f.label) }}</ion-label><ion-note slot="end" class="big">{{ figs[f.key] ?? 0 }}</ion-note></ion-item> }
+          @for (f of header; track f.key) { <ion-item><ion-label>{{ f.item }} · {{ t(f.label) }}</ion-label><ion-note slot="end" class="big">{{ figs[f.key] ?? 0 }}</ion-note></ion-item> }
+          <ion-item><ion-label>8 · {{ t('Total used ballot papers') }}</ion-label><ion-note slot="end" class="big">{{ usedDiffers ? figs['used'] : used() }}</ion-note></ion-item>
           @for (p of parties(); track p) { <ion-item><ion-label>{{ p }}</ion-label><ion-note slot="end" class="big">{{ votes[p] ?? 0 }}</ion-note></ion-item> }
         </ion-list>
         @for (i of issues(); track i.code) { <p class="warn">⚠ {{ i.message }}</p> }
+        @for (w of ballotIssues(); track w.flag) { <p class="warn">⚠ {{ w.message }}</p> }
         @if (issues().length) { <p class="hint">If the sheet itself has these figures, submit anyway: the situation room will look at it.</p> }
         @if (!photoUrl()) { <p class="warn">No photo of the sheet. Please go back and take one if you can.</p> }
       }
@@ -75,12 +87,13 @@ export default class ResultPage {
   t = inject(I18n).t;
   pu = this.api.me()!.area_code;
   parties = this.api.parties;
-  header = [
-    { key: 'registered', label: 'Registered voters' }, { key: 'accredited', label: 'Accredited voters' },
-    { key: 'rejected', label: 'Rejected ballots' }, { key: 'totalValid', label: 'Total valid votes' },
-  ] as const;
+  private unitFigs = inject(UnitFiguresService);
+  /** EC8A items 1 to 7 in sheet order (item 8 is worked out). `key` is the form field. */
+  header = UNIT_FIGURE_ITEMS.filter((i) => i.item <= 7).map((i) => ({ ...i, key: i.key === 'total_valid' ? 'totalValid' : i.key }));
   step = signal(0);
-  figs: Record<string, number | null> = {};
+  figs: Record<string, number | null> = this.prefill();
+  usedDiffers = this.figs['used'] != null && this.figs['used'] !== usedBallots(this.unitFigures());
+  prefilled = Object.values(this.figs).some((v) => v != null);
   votes: Record<string, number | null> = {};
   photoUrl = signal<string | null>(null);
   private blob: Blob | null = null;
@@ -94,10 +107,29 @@ export default class ResultPage {
     votes: Object.fromEntries(this.parties().map((p) => [p, Number(this.votes[p] ?? 0)])),
   });
   issues = computed(() => { this.rev(); return checkResult(this.figures()); });
+  used = computed(() => { this.rev(); return usedBallots(this.unitFigures()); });
+  /** Ballot-paper checks the room also runs (balance with papers issued, item 8, over the register) */
+  ballotIssues = computed(() => { this.rev(); return figureFlags(this.unitFigures()).filter((f) => f.flag !== 'over_registered' && f.flag !== 'over_accredited'); });
+
+  /** Starts from the figures already sent today (setup, accreditation, close of poll) */
+  private prefill(): Record<string, number | null> {
+    const l = inject(UnitFiguresService).latest();
+    return { registered: l.registered ?? null, accredited: l.accredited ?? null, ballots_received: l.ballots_received ?? null,
+      unused: l.unused ?? null, spoiled: l.spoiled ?? null, rejected: l.rejected ?? null, totalValid: l.total_valid ?? null, used: l.used ?? null };
+  }
+
+  /** The form as EC8A summary figures */
+  unitFigures(): UnitFigures {
+    const n = (k: string) => (this.figs[k] === null || this.figs[k] === undefined || (this.figs[k] as unknown) === '' ? undefined : Number(this.figs[k]));
+    const f: UnitFigures = { registered: n('registered'), accredited: n('accredited'), ballots_received: n('ballots_received'), unused: n('unused'),
+      spoiled: n('spoiled'), rejected: n('rejected'), total_valid: n('totalValid') };
+    if (this.usedDiffers && n('used') !== undefined) f.used = n('used');
+    return Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as UnitFigures;
+  }
 
   async next() {
     if (this.step() === 0 && this.header.some((f) => this.figs[f.key] === null || this.figs[f.key] === undefined)) {
-      await this.ui.error('Fill in all four figures (write 0 if none)'); return;
+      await this.ui.error('Fill in items 1 to 7 (write 0 if none)'); return;
     }
     this.step.set(this.step() + 1);
   }
@@ -112,6 +144,8 @@ export default class ResultPage {
     localStorage.setItem('rumfa.result.version', String(version));
     await this.outbox.add('result', { pu: this.pu, version, registered: f.registered, accredited: f.accredited, rejected: f.rejected,
       total_valid: f.totalValid, votes: f.votes }, `Result for ${this.pu}`, this.blob);
+    // The summary figures (items 1 to 8) also go to "My polling unit", so the ballot checks run on the final sheet
+    await this.unitFigs.send('result', this.unitFigures());
     await this.ui.toast('Result saved. It will send now, or you can send it by SMS if there is no internet.');
     await this.router.navigateByUrl('/');
   }

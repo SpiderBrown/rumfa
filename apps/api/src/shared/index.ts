@@ -420,3 +420,97 @@ export function placeName(raw: string | null | undefined): string {
     return w[0].toUpperCase() + w.slice(1).toLowerCase();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Polling-day figures (EC8A summary, sent stage by stage)
+// ---------------------------------------------------------------------------
+
+/** EC8A summary figures by item number. `used` (item 8) is spoiled + rejected + total valid. */
+export interface UnitFigures {
+  registered?: number;        // 1 voters on the register
+  accredited?: number;        // 2 accredited voters
+  ballots_received?: number;  // 3 ballot papers issued to the polling unit
+  unused?: number;            // 4 unused ballot papers
+  spoiled?: number;           // 5 spoiled ballot papers
+  rejected?: number;          // 6 rejected ballots
+  total_valid?: number;       // 7 total valid votes
+  used?: number;              // 8 total used ballot papers, as announced (when it differs from 5 + 6 + 7)
+}
+export const UNIT_FIGURE_ITEMS: { key: keyof UnitFigures; item: number; label: string }[] = [
+  { key: 'registered', item: 1, label: 'Voters on the register' },
+  { key: 'accredited', item: 2, label: 'Accredited voters' },
+  { key: 'ballots_received', item: 3, label: 'Ballot papers issued to the polling unit' },
+  { key: 'unused', item: 4, label: 'Unused ballot papers' },
+  { key: 'spoiled', item: 5, label: 'Spoiled ballot papers' },
+  { key: 'rejected', item: 6, label: 'Rejected ballots' },
+  { key: 'total_valid', item: 7, label: 'Total valid votes' },
+  { key: 'used', item: 8, label: 'Total used ballot papers' },
+];
+export const UNIT_FIGURE_KEYS = UNIT_FIGURE_ITEMS.map((i) => i.key);
+
+const has = (n: number | undefined | null): n is number => typeof n === 'number' && Number.isFinite(n);
+
+/** Item 8 as it should be: spoiled + rejected + total valid (null until all three are known). */
+export function usedBallots(f: UnitFigures): number | null {
+  return has(f.spoiled) && has(f.rejected) && has(f.total_valid) ? f.spoiled + f.rejected + f.total_valid : null;
+}
+
+export type FigureFlag =
+  | 'over_registered' | 'over_accredited' | 'ballots_unbalanced' | 'used_mismatch'
+  | 'very_high_turnout' | 'low_turnout' | 'stronghold_low_turnout' | 'accreditation_dropped';
+
+export interface FigureFlagResult { flag: FigureFlag; message: string; details: Record<string, unknown> }
+
+/** Thresholds for turnout flags (share of the register). */
+export const TURNOUT = { veryHigh: 0.9, veryLow: 0.1, strongholdFraction: 0.5, strongholdShare: 0.5, minRegister: 50 };
+
+/**
+ * Problems shown by a unit's figures. Used on the phone (as warnings while typing) and on the server (as flags
+ * raised to the situation room). `final` means accreditation has closed (close-of-poll or result figures).
+ * `baseline` is the same unit in the previous election, when known; `previousAccredited` the last figure sent.
+ */
+export function figureFlags(f: UnitFigures, opts: {
+  final?: boolean; previousAccredited?: number | null;
+  baseline?: { turnout: number | null; ownShare: number | null } | null;
+} = {}): FigureFlagResult[] {
+  const out: FigureFlagResult[] = [];
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  if (has(f.accredited) && has(f.registered) && f.accredited > f.registered) {
+    out.push({ flag: 'over_registered', message: `Accredited (${f.accredited}) is more than voters on the register (${f.registered})`,
+      details: { accredited: f.accredited, registered: f.registered } });
+  }
+  if (has(f.accredited) && has(f.rejected) && has(f.total_valid) && f.rejected + f.total_valid > f.accredited) {
+    out.push({ flag: 'over_accredited', message: `Rejected + valid (${f.rejected + f.total_valid}) is more than accredited voters (${f.accredited})`,
+      details: { accredited: f.accredited, counted: f.rejected + f.total_valid } });
+  }
+  const used = usedBallots(f);
+  if (used !== null && has(f.unused) && has(f.ballots_received) && used + f.unused !== f.ballots_received) {
+    out.push({ flag: 'ballots_unbalanced',
+      message: `Used (${used}) + unused (${f.unused}) = ${used + f.unused}, but ${f.ballots_received} ballot papers were issued`,
+      details: { received: f.ballots_received, used, unused: f.unused, difference: used + f.unused - f.ballots_received } });
+  }
+  if (used !== null && has(f.used) && f.used !== used) {
+    out.push({ flag: 'used_mismatch', message: `Announced used ballot papers (${f.used}) differ from spoiled + rejected + valid (${used})`,
+      details: { announced: f.used, computed: used } });
+  }
+  if (has(opts.previousAccredited) && has(f.accredited) && f.accredited < opts.previousAccredited) {
+    out.push({ flag: 'accreditation_dropped', message: `Accredited went down from ${opts.previousAccredited} to ${f.accredited}`,
+      details: { before: opts.previousAccredited, now: f.accredited } });
+  }
+  if (opts.final && has(f.accredited) && has(f.registered) && f.registered >= TURNOUT.minRegister && f.accredited <= f.registered) {
+    const turnout = f.accredited / f.registered;
+    if (turnout > TURNOUT.veryHigh) {
+      out.push({ flag: 'very_high_turnout', message: `Turnout ${pct(turnout)} of the register`, details: { turnout } });
+    }
+    if (turnout < TURNOUT.veryLow) {
+      out.push({ flag: 'low_turnout', message: `Turnout only ${pct(turnout)} of the register`, details: { turnout } });
+    }
+    const b = opts.baseline;
+    if (b && has(b.turnout) && has(b.ownShare) && b.ownShare >= TURNOUT.strongholdShare && turnout < b.turnout * TURNOUT.strongholdFraction) {
+      out.push({ flag: 'stronghold_low_turnout',
+        message: `Turnout ${pct(turnout)}, less than half of last time (${pct(b.turnout)}) in a unit where we had ${pct(b.ownShare)} of the votes`,
+        details: { turnout, baselineTurnout: b.turnout, ownShare: b.ownShare } });
+    }
+  }
+  return out;
+}

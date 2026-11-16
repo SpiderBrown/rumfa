@@ -164,7 +164,7 @@ export class Outbox {
         await this.api.post('/callbacks', { reason: p['reason'] });
         return;
       case 'checkin':
-        await this.api.post('/checkins', { pu: p['pu'], lat: p['lat'], lng: p['lng'], accuracy: p['accuracy'], clientId });
+        await this.api.post('/checkins', { pu: p['pu'], lat: p['lat'], lng: p['lng'], accuracy: p['accuracy'], at: p['at'] ?? new Date(i.createdAt).toISOString(), note: p['note'] ?? undefined, clientId });
         return;
       case 'checklist':
         await this.api.put('/checklist', { pu: p['pu'], item: p['item'], answer: p['answer'], clientId });

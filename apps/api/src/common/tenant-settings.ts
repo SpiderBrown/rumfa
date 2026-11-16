@@ -20,13 +20,33 @@ export function callSettings(settings: any): CallSettings {
   return { phone: c.phone ?? true, bridged: c.bridged ?? true, webrtc: c.webrtc ?? false, inapp: c.inapp ?? false };
 }
 
-export async function tenantCallSettings(db: Db, tenantId: string): Promise<CallSettings> {
+/** The tenant's raw settings object. */
+export async function tenantSettings(db: Db, tenantId: string): Promise<any> {
   const [t] = await db.system<{ settings: any }>(`select settings from public.tenants where id = $1`, [tenantId]);
-  return callSettings(t?.settings);
+  return t?.settings ?? {};
+}
+
+export async function tenantCallSettings(db: Db, tenantId: string): Promise<CallSettings> {
+  return callSettings(await tenantSettings(db, tenantId));
 }
 
 export async function requireCallMode(db: Db, tenantId: string, mode: CallMode) {
   if (!(await tenantCallSettings(db, tenantId))[mode]) {
     throw new ForbiddenException(({ phone: 'Phone calls', bridged: 'Rumfa calls', webrtc: 'Internet calls', inapp: 'App calls' } as const)[mode] + ' are turned off for your organisation');
   }
+}
+
+/**
+ * When field people may check in (tenants.settings.checkin). Check-in opens on election day at `opens`
+ * (Lagos time) and closes at midnight. `anyDay` allows it on other days too, for training and mock drills.
+ */
+export interface CheckinSettings { opens: string; anyDay: boolean }
+export function checkinSettings(settings: any): CheckinSettings {
+  const c = settings?.checkin ?? {};
+  return { opens: /^\d{2}:\d{2}$/.test(c.opens ?? '') ? c.opens : '06:00', anyDay: !!c.anyDay };
+}
+
+/** The organisation's own party (tenants.settings.party): shown first and largest on the live count. */
+export function ownParty(settings: any): string | null {
+  return typeof settings?.party === 'string' && /^[A-Z]{1,8}$/.test(settings.party) ? settings.party : null;
 }

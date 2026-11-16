@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { path: '/room', icon: 'support_agent', text: 'Situation room' },
   { path: '/map', icon: 'map', text: 'Situation map', roles: ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'] },
   { path: '/callbacks', icon: 'phone_callback', text: 'Callback requests' },
+  { path: '/checkins', icon: 'where_to_vote', text: 'Check-ins', roles: ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'] },
   { path: '/live-count', icon: 'ballot', text: 'Live count', roles: ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'] },
   { path: '/results', icon: 'how_to_vote', text: 'Live results', roles: ['analyst', 'supervisor', 'admin', 'legal', 'operator'] },
   { path: '/irev', icon: 'cloud_download', text: 'IReV data', roles: ['analyst', 'supervisor', 'admin'] },

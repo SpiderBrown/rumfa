@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   encodeResultSms, encodeIncidentSms, encodeCallbackSms, decodeSms, SmsDecodeError,
   checkResult, diffResults, normaliseNgPhone, normalisePuCode, areaAt,
+  pointInGeometry, judgeCheckin, type Geo, type CheckinFence, placeName,
 } from '../src/index.ts';
 
 const figs = { registered: 607, accredited: 265, rejected: 0, totalValid: 265, votes: { APC: 83, NNPP: 149, PDP: 32, ADP: 1 } };
@@ -66,4 +67,30 @@ test('map colours: issues, parties, reporting', async () => {
   assert.equal(partyColour('XYZ', order), partyColour('XYZ', order));
   assert.ok(leadOpacity(0) < leadOpacity(0.2) && leadOpacity(1) <= 0.9);
   assert.deepEqual([reportingBand(0, 10), reportingBand(1, 10), reportingBand(3, 10), reportingBand(6, 10), reportingBand(10, 10)], [0, 1, 2, 3, 4]);
+});
+
+test('check-in location: inside the ward, near the unit, or not', () => {
+  const square: Geo = { type: 'Polygon', coordinates: [[[8, 12], [8.1, 12], [8.1, 12.1], [8, 12.1], [8, 12]]] };
+  assert.equal(pointInGeometry(12.05, 8.05, square), true);
+  assert.equal(pointInGeometry(12.2, 8.05, square), false);
+  const ward: CheckinFence = { level: 'ward', code: '19-28-02', name: 'W', geometry: square, center: { lat: 12.05, lng: 8.05 } };
+  assert.equal(judgeCheckin(ward, { lat: 12.05, lng: 8.05 }).inside, true);
+  const out = judgeCheckin(ward, { lat: 12.3, lng: 8.05 });
+  assert.equal(out.inside, false);
+  assert.ok(out.distance! > 20000);
+  assert.equal(judgeCheckin(ward, {}).inside, null);
+  const unit: CheckinFence = { level: 'unit', code: '19-28-02-003', name: 'U', center: { lat: 12, lng: 8 } };
+  assert.equal(judgeCheckin(unit, { lat: 12.005, lng: 8 }).inside, true);   // ~550 m
+  assert.equal(judgeCheckin(unit, { lat: 12.03, lng: 8 }).inside, false);   // ~3.3 km
+  assert.equal(judgeCheckin(null, { lat: 1, lng: 1 }).inside, null);
+});
+
+test('place names read well', () => {
+  assert.equal(placeName('TUDUN WADA'), 'Tudun Wada');
+  assert.equal(placeName('Tinde Laru Ii'), 'Tinde Laru II');
+  assert.equal(placeName('LGEA PRI. SCH. KOFAR FADA'), 'LGEA Pri. Sch. Kofar Fada');
+  assert.equal(placeName('Botta / Botta'), 'Botta / Botta');
+  assert.equal(placeName('FEDERAL CAPITAL TERRITORY'), 'Federal Capital Territory');
+  assert.equal(placeName("  DAN'AGUNDI  "), "Dan'agundi");
+  assert.equal(placeName(null), '');
 });

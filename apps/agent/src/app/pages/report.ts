@@ -8,6 +8,7 @@ import { Outbox } from '../core/outbox';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 import { takePhoto } from '../core/photo';
+import { categoryIcon } from '../core/categories';
 
 /** Report a problem: pick a category (big buttons), optionally add a note and photo, send. */
 @Component({
@@ -22,11 +23,13 @@ import { takePhoto } from '../core/photo';
       <p class="hint">{{ sos() ? 'What is happening? This goes to the situation room as an emergency.' : 'What is the problem?' }}</p>
       <div class="cats">
         @for (c of categories(); track c.code) {
-          <ion-button expand="block" [color]="c.severity === 'critical' ? 'danger' : 'light'" (click)="cat.set(c)">{{ c.label }}</ion-button>
+          <button class="cat" [class]="c.severity" (click)="cat.set(c)">
+            <ion-icon [name]="icon(c.code)" /><span>{{ t(c.label) }}</span>
+          </button>
         }
       </div>
     } @else {
-      <h2>{{ cat()!.label }}</h2>
+      <h2 class="chosen"><ion-icon [name]="icon(cat()!.code)" />{{ t(cat()!.label) }}</h2>
       <ion-list>
         <ion-item><ion-textarea label="What happened? (optional)" labelPlacement="stacked" [autoGrow]="true" [(ngModel)]="note" /></ion-item>
       </ion-list>
@@ -36,10 +39,22 @@ import { takePhoto } from '../core/photo';
       <ion-button expand="block" fill="clear" (click)="cat.set(null)">{{ t('Back') }}</ion-button>
     }
   </ion-content>`,
-  styles: `.cats { display: flex; flex-direction: column; gap: 4px; } .preview { width: 100%; border-radius: 12px; margin: 8px 0; }`,
+  styles: `
+    .cats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .cat { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 104px; padding: 10px;
+      border: 0; border-radius: 16px; background: var(--ion-color-light); color: var(--ion-text-color); font: inherit; font-weight: 600;
+      font-size: 15px; line-height: 1.25; text-align: center; touch-action: manipulation; }
+    .cat ion-icon { font-size: 34px; color: var(--ion-color-primary); }
+    .cat.high ion-icon { color: #c2410c; }
+    .cat.critical { background: #b3261e; color: #fff; } .cat.critical ion-icon { color: #fff; }
+    .cat:active { transform: scale(.97); }
+    .chosen { display: flex; align-items: center; gap: 10px; } .chosen ion-icon { font-size: 30px; color: var(--ion-color-primary); }
+    .preview { width: 100%; border-radius: 12px; margin: 8px 0; }`,
 })
 export default class ReportPage {
   sosParam = input<string | undefined>(undefined, { alias: 'sos' });
+  /** Opens straight on one problem (e.g. from a "No" on the checklist) */
+  categoryParam = input<string | undefined>(undefined, { alias: 'category' });
   private api = inject(Api);
   private outbox = inject(Outbox);
   private router = inject(Router);
@@ -52,6 +67,12 @@ export default class ReportPage {
   sos = () => this.sosParam() === '1';
   categories = () => this.sos() ? INCIDENT_CATEGORIES.filter((c) => ['violence', 'ballot_snatching', 'thugs'].includes(c.code))
     : INCIDENT_CATEGORIES;
+
+  constructor() {
+    queueMicrotask(() => { const c = INCIDENT_CATEGORIES.find((x) => x.code === this.categoryParam()); if (c) this.cat.set(c); });
+  }
+
+  icon(code: string) { return categoryIcon(code); }
 
   async photo() { const p = await takePhoto(); if (p) { this.blob = p.blob; this.photoUrl.set(p.url); } }
 

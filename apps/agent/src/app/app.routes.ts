@@ -2,6 +2,7 @@ import { inject } from '@angular/core';
 import { Router, type CanActivateFn, type Routes } from '@angular/router';
 import { Api } from './core/api';
 import { Pin } from './core/pin';
+import { Checkin } from './core/checkin';
 
 /** Phone activated, PIN entered, and onboarded. */
 const ready: CanActivateFn = () => {
@@ -12,16 +13,23 @@ const ready: CanActivateFn = () => {
   return true;
 };
 
+/** Field pages (checklist, report, live count, result) wait for check-in at the unit. SOS never waits. */
+const checkedIn: CanActivateFn = (route) => {
+  const s = inject(Api), r = inject(Router);
+  if (route.queryParamMap.get('sos') === '1' || !s.atUnit() || !inject(Checkin).required()) return true;
+  return r.parseUrl('/');
+};
+
 export const routes: Routes = [
   { path: 'login', loadComponent: () => import('./pages/login').then((m) => m.default) },
   { path: 'lock', loadComponent: () => import('./pages/lock').then((m) => m.default) },
   { path: 'onboarding', loadComponent: () => import('./pages/onboarding').then((m) => m.default) },
   { path: '', canActivate: [ready], loadComponent: () => import('./pages/home').then((m) => m.default) },
-  { path: 'report', canActivate: [ready], loadComponent: () => import('./pages/report').then((m) => m.default) },
-  { path: 'result', canActivate: [ready], loadComponent: () => import('./pages/result').then((m) => m.default) },
-  { path: 'count', canActivate: [ready], loadComponent: () => import('./pages/count').then((m) => m.default) },
+  { path: 'report', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/report').then((m) => m.default) },
+  { path: 'result', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/result').then((m) => m.default) },
+  { path: 'count', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/count').then((m) => m.default) },
   { path: 'quick', redirectTo: 'count' },
-  { path: 'checklist', canActivate: [ready], loadComponent: () => import('./pages/checklist').then((m) => m.default) },
+  { path: 'checklist', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/checklist').then((m) => m.default) },
   { path: 'callback', canActivate: [ready], loadComponent: () => import('./pages/callback').then((m) => m.default) },
   { path: 'messages', canActivate: [ready], loadComponent: () => import('./pages/messages').then((m) => m.default) },
   { path: 'chat/:id', canActivate: [ready], loadComponent: () => import('./pages/chat').then((m) => m.default) },

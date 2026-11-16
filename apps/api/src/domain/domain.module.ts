@@ -9,6 +9,7 @@ import { ContextController } from './context.controller';
 import { FieldController } from './field.controller';
 import { LiveViewController } from './live.controller';
 import { LiveCountsController } from './live-counts.controller';
+import { CheckinsController } from './checkins.controller';
 import { MapController } from './map.controller';
 import { MediaController } from './media.controller';
 import { MessagesController } from './messages.controller';
@@ -21,7 +22,7 @@ import { WebhooksController } from '../webhooks/webhooks.controller';
   controllers: [
     ContextController, PeopleController, CasesController, FieldController, ResultsController, CallbacksController,
     ContactsController, MessagesController, ShiftsController, TopupsController, VoiceController, MediaController,
-    LiveViewController, CallsController, SettingsController, MapController, LiveCountsController, WebhooksController,
+    LiveViewController, CallsController, SettingsController, MapController, LiveCountsController, CheckinsController, WebhooksController,
   ],
   providers: [AppCallsService],
 })

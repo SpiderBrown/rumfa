@@ -342,3 +342,80 @@ export function reportingBand(reported: number, units: number): number {
   const r = reported / units;
   return r < 0.25 ? 1 : r < 0.5 ? 2 : r < 0.9 ? 3 : 4;
 }
+
+// ---------------------------------------------------------------------------
+// Check-in location: is the agent within their own area?
+// ---------------------------------------------------------------------------
+
+export type Geo = { type: 'Polygon'; coordinates: number[][][] } | { type: 'MultiPolygon'; coordinates: number[][][][] };
+
+/** Metres between two points (haversine). */
+export function metres(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const r = (d: number) => (d * Math.PI) / 180;
+  const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+  return Math.round(2 * 6371000 * Math.asin(Math.sqrt(h)));
+}
+
+function inRing(lng: number, lat: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+/** Is the point inside a GeoJSON polygon or multipolygon (holes respected)? */
+export function pointInGeometry(lat: number, lng: number, g: Geo): boolean {
+  const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  return polys.some(([outer, ...holes]) => inRing(lng, lat, outer) && !holes.some((h) => inRing(lng, lat, h)));
+}
+
+/**
+ * What a check-in is compared against, best first: the ward outline; else the polling unit's own position
+ * (within UNIT_RADIUS_M); else the LGA outline; else the state outline. Whichever the data has.
+ */
+export interface CheckinFence {
+  level: 'ward' | 'unit' | 'lga' | 'state';
+  code: string;
+  name: string;
+  geometry?: Geo | null;
+  center?: { lat: number; lng: number } | null;
+}
+export const UNIT_RADIUS_M = 1500;
+
+export interface CheckinJudgement { inside: boolean | null; distance: number | null; against: CheckinFence['level'] | null }
+
+/** inside: true/false, or null when there is no location or nothing to compare with. */
+export function judgeCheckin(fence: CheckinFence | null | undefined, pos: { lat?: number | null; lng?: number | null }): CheckinJudgement {
+  if (!fence) return { inside: null, distance: null, against: null };
+  if (pos.lat == null || pos.lng == null) return { inside: null, distance: null, against: fence.level };
+  const p = { lat: pos.lat, lng: pos.lng };
+  const distance = fence.center ? metres(p, fence.center) : null;
+  if (fence.level === 'unit') return { inside: distance != null && distance <= UNIT_RADIUS_M, distance, against: 'unit' };
+  if (!fence.geometry) return { inside: null, distance, against: fence.level };
+  return { inside: pointInGeometry(p.lat, p.lng, fence.geometry), distance, against: fence.level };
+}
+
+// ---------------------------------------------------------------------------
+// Place names for display
+// ---------------------------------------------------------------------------
+
+const ROMAN = /^(i{1,3}|iv|v|vi{1,3}|ix|x{1,3})$/i;
+// Common short forms in INEC unit and ward names, kept in capitals
+const ABBREV = new Set(['FCT', 'LGA', 'LGEA', 'UBE', 'JSS', 'SSS', 'GSS', 'GDSS', 'GJSS', 'GGSS', 'GSSS', 'LEA', 'PS', 'PRY', 'NYSC', 'ECWA', 'RCM', 'CAC', 'UMCA', 'NEPA', 'NITEL', 'NNPC', 'PHC', 'MCH', 'GRA', 'II', 'III']);
+
+/**
+ * Tidies a place name for people to read: INEC lists are often in capitals ("TUDUN WADA" -> "Tudun Wada"),
+ * keeping roman numerals ("Laru II") and the usual short forms ("LGEA Pri. Sch.") as they are written.
+ */
+export function placeName(raw: string | null | undefined): string {
+  const s = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const shouting = s === s.toUpperCase() && /[A-Z]{3}/.test(s);
+  return s.replace(/[A-Za-z][A-Za-z']*/g, (w) => {
+    if (ROMAN.test(w)) return w.toUpperCase();
+    if (!shouting) return w;
+    if (ABBREV.has(w.toUpperCase())) return w.toUpperCase();
+    return w[0].toUpperCase() + w.slice(1).toLowerCase();
+  });
+}

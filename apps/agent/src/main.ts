@@ -4,6 +4,7 @@ import {
   alertCircle, arrowBack, call, callOutline, camera, chatbubbles, checkmarkCircle, chevronForward, cloudUploadOutline, documentText,
   helpCircle, home, list, locationOutline, logOut, mail, people, personAdd, refresh, send, shieldCheckmark, speedometer,
   timeOutline, videocam, warning, closeCircle, phonePortrait, map, arrowUndo,
+  flame, fileTrayFull, skull, handLeft, cash, hourglass, fingerPrint, personRemove, newspaper, cloudOffline, ellipsisHorizontalCircle, ellipseOutline,
 } from 'ionicons/icons';
 import { appConfig } from './app/app.config';
 import { App } from './app/app';
@@ -12,5 +13,6 @@ addIcons({
   alertCircle, arrowBack, call, callOutline, camera, chatbubbles, checkmarkCircle, chevronForward, cloudUploadOutline, documentText,
   helpCircle, home, list, locationOutline, logOut, mail, people, personAdd, refresh, send, shieldCheckmark, speedometer,
   timeOutline, videocam, warning, closeCircle, phonePortrait, map, arrowUndo,
+  flame, fileTrayFull, skull, handLeft, cash, hourglass, fingerPrint, personRemove, newspaper, cloudOffline, ellipsisHorizontalCircle, ellipseOutline,
 });
 bootstrapApplication(App, appConfig).catch((err) => console.error(err));

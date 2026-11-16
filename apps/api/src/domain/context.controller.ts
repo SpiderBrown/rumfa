@@ -6,7 +6,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn, elections } from '../common/fn';
 import { ROOM } from './roles';
-import { tenantCallSettings } from '../common/tenant-settings';
+import { callSettings, ownParty, tenantSettings } from '../common/tenant-settings';
 
 class OnboardingDto {
   @ApiProperty({ enum: ['mtn', 'airtel', 'glo', '9mobile'] }) @IsIn(['mtn', 'airtel', 'glo', '9mobile']) network: string;
@@ -39,7 +39,11 @@ export class ContextController {
       const categories = await q(`select code, sms, label, severity, queue_kind, related, is_alert from public.incident_categories order by label`);
       const [status] = ROOM.includes(user.role) ? await q(`select status from public.staff_status where volunteer_id = $1`, [user.mid]) : [];
       return { me, elections: el, parties, categories, staffStatus: status?.status ?? null };
-    }).then(async (ctx) => ({ ...ctx, calls: await tenantCallSettings(this.db, user.tid) }));
+    }).then(async (ctx) => {
+      const settings = await tenantSettings(this.db, user.tid);
+      const own = ownParty(settings);
+      return { ...ctx, calls: callSettings(settings), ownParty: own && ctx.parties.includes(own) ? own : null };
+    });
   }
 
   @Post('onboarding') @HttpCode(204)

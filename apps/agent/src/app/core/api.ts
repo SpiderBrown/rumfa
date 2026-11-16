@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import { io, type Socket } from 'socket.io-client';
 
 declare global {
-  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string; atWebrtcScript?: string; mapTiles?: { url: string; attribution?: string } } }
+  interface Window { RUMFA_CONFIG: { apiUrl: string; smsNumber: string; helpline?: string; brand?: string; atWebrtcScript?: string; partyLogos?: string; mapTiles?: { url: string; attribution?: string } } }
 }
 
 export interface Me {
@@ -44,12 +44,20 @@ export class Api {
   readonly session = signal<Session | null>(this.sess);
   readonly me = signal<Me | null>(read<any>(K.context)?.me ?? null);
   readonly parties = signal<string[]>(read<any>(K.context)?.parties ?? []);
+  /** The organisation's own party on this ballot, if set (shown first and largest on the live count) */
+  readonly ownParty = signal<string | null>(read<any>(K.context)?.ownParty ?? null);
   readonly otherMemberships = signal<Membership[]>(read<any>(K.context)?.otherMemberships ?? []);
   readonly callOptions = signal<CallOptions>(read<any>(K.context)?.calls ?? { phone: true, bridged: false, webrtc: false, inapp: false });
   readonly brand = signal<string>(this.me()?.brand ?? this.config.brand ?? 'Rumfa');
   readonly isAgent = computed(() => this.me()?.role === 'agent');
   readonly isCoordinator = computed(() => this.me()?.role === 'coordinator');
   readonly atUnit = computed(() => this.me()?.level === 'pu');
+
+  /** Logo picture for a party, from the app's config (files you place in public/parties by default); '' for none */
+  partyLogo(party: string): string {
+    const pattern = this.config.partyLogos ?? 'parties/{party}.png';
+    return pattern ? pattern.replace('{party}', party.toLowerCase()) : '';
+  }
 
   hasDevice() { return !!this.device; }
   devicePhone() { return this.device?.phone ?? ''; }
@@ -109,10 +117,11 @@ export class Api {
 
   async refreshMe(): Promise<void> {
     const [ctx, me] = await Promise.all([this.call<any>('GET', '/me/context'), this.call<any>('GET', '/auth/me')]);
-    const cache = { me: ctx.me, parties: ctx.parties, categories: ctx.categories, otherMemberships: me.otherMemberships, calls: ctx.calls };
+    const cache = { me: ctx.me, parties: ctx.parties, categories: ctx.categories, otherMemberships: me.otherMemberships, calls: ctx.calls, ownParty: ctx.ownParty ?? null };
     localStorage.setItem(K.context, JSON.stringify(cache));
     this.me.set(ctx.me);
     this.parties.set(ctx.parties);
+    this.ownParty.set(ctx.ownParty ?? null);
     if (ctx.calls) this.callOptions.set(ctx.calls);
     this.otherMemberships.set(me.otherMemberships);
     this.brand.set(ctx.me.brand);

@@ -1,7 +1,8 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonTitle, IonToolbar } from '@ionic/angular';
+import { IonButton, IonContent, IonFab, IonIcon } from '@ionic/angular';
+import { AppBar } from '../core/app-bar';
 import { type UnitFigures, UNIT_FIGURE_ITEMS, figureFlags, usedBallots } from '@rumfa/shared';
 import { Api } from '../core/api';
 import { I18n } from '../core/i18n';
@@ -23,13 +24,15 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
  */
 @Component({
   selector: 'page-unit',
-  imports: [FormsModule, RouterLink, IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonTitle, IonToolbar],
+  imports: [FormsModule, RouterLink, AppBar, IonButton, IonContent, IonFab, IonIcon],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
-    <ion-title>{{ t('My polling unit') }}</ion-title></ion-toolbar></ion-header>
-  <ion-content>
+  <app-bar [title]="t('Today')" [sub]="api.brand() + ' · ' + (api.me()?.area_code ?? '')" [sos]="api.atUnit()" />
+  <ion-content [scrollEvents]="true" (ionScroll)="onScroll($event)">
+    @if (!api.atUnit()) {
+      <div class="empty"><ion-icon name="today" /><b>{{ t('No polling unit assigned to you') }}</b>
+        <p>{{ t('Your coordinator assigns polling units. Use Chats to reach them.') }}</p></div>
+    } @else {
     <div class="top">
-      <div class="unit">{{ api.me()?.area_code }}</div>
       <div class="prog"><span class="track"><i [style.width.%]="progress() * 100"></i></span> {{ doneStages() }} / {{ stages.length }} {{ t('stages') }}</div>
       @if (turnout() !== null) { <div class="turn"><b>{{ pct(turnout()!) }}</b> {{ t('turnout so far') }} · {{ latest().accredited }} / {{ latest().registered }}</div> }
       @if (figs.pendingCount()) { <div class="wait">{{ figs.pendingCount() }} {{ t('saved on phone, will send when there is signal') }}</div> }
@@ -134,11 +137,7 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
                         <ion-icon slot="start" name="document-text" />{{ resultSent() ? t('Correct the result') : t('Fill in the result sheet') }}</ion-button>
                     </div>
                   }
-                  @case ('report') {
-                    <div class="task plain">
-                      <ion-button expand="block" fill="outline" color="warning" routerLink="/report"><ion-icon slot="start" name="warning" />{{ t('Report a problem') }}</ion-button>
-                    </div>
-                  }
+
                 }
               }
             }
@@ -147,6 +146,15 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
       </section>
     }
     <p class="foot hint">{{ t('Copy each figure exactly as announced or written. If a figure does not add up, send it anyway: the situation room needs to know.') }}</p>
+    }
+    <!-- Report a problem, from anywhere in the day (after check-in) -->
+    @if (api.atUnit()) {
+      <ion-fab slot="fixed" vertical="bottom" horizontal="end">
+        <button class="report" [class.compact]="compact()" (click)="report()" [attr.aria-label]="t('Report a problem')">
+          <ion-icon name="warning" />@if (!compact()) { <span>{{ t('Report') }}</span> }
+        </button>
+      </ion-fab>
+    }
   </ion-content>`,
   styles: `
     .top { padding: 14px 16px 6px; } .unit { color: var(--ion-color-medium); font-size: 13px; }
@@ -181,7 +189,13 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
     input:focus { outline: none; border-color: var(--ion-color-primary); }
     .warn { color: #b45309; font-size: 14px; margin: 6px 0; } .hint { color: var(--ion-color-medium); font-size: 13px; margin: 0 0 6px; }
     .hist { margin-top: 10px; font-size: 14px; } .hist div { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
-    .hist b { min-width: 48px; } .foot { margin: 16px; }
+    .hist b { min-width: 48px; } .foot { margin: 16px 16px 96px; }
+    .empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 56px 32px; color: var(--ion-color-medium); }
+    .empty ion-icon { font-size: 48px; color: var(--ion-color-primary); } .empty b { color: var(--ion-text-color); font-size: 17px; }
+    .report { display: flex; align-items: center; gap: 8px; height: 54px; padding: 0 22px 0 18px; border: 0; border-radius: 27px; background: #ea580c;
+      color: #fff; font: inherit; font-weight: 700; font-size: 16px; box-shadow: 0 4px 14px rgba(234,88,12,.4); transition: padding .2s, width .2s; }
+    .report:active { background: #c2410c; transform: scale(.97); } .report ion-icon { font-size: 24px; }
+    .report.compact { width: 54px; padding: 0; justify-content: center; }
   `,
 })
 export default class UnitPage {
@@ -204,6 +218,18 @@ export default class UnitPage {
   private opened = signal<DayStage | 'none' | null>(null);
 
   constructor() { if (this.api.isAgent()) void this.lc.open(); }
+
+  /** The Report button shrinks to an icon while scrolling down, so it never covers what the agent is reading */
+  compact = signal(false);
+  onScroll(ev: CustomEvent) { this.compact.set((ev.detail as { scrollTop: number }).scrollTop > 120); }
+
+  async report() {
+    if (this.ci.required()) {
+      if (!(await this.ui.confirm('Check in first', 'Check in at your polling unit before you start. It tells the situation room you are in place.', 'Check in now', 'Cancel'))) return;
+      if (!(await this.flow.run())) return;
+    }
+    await this.router.navigateByUrl('/report');
+  }
 
   day = inject(DayJourney);
   turnout = computed(() => { const l = this.latest(); return l.registered && l.accredited != null ? l.accredited / l.registered : null; });

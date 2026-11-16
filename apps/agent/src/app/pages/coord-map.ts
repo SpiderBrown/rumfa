@@ -1,8 +1,9 @@
 import { Component, ElementRef, OnDestroy, computed, inject, signal, viewChild } from '@angular/core';
 import { PercentPipe } from '@angular/common';
-import { IonBackButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonListHeader, IonSegment, IonSegmentButton, IonTitle, IonToolbar } from '@ionic/angular';
+import { IonContent, IonItem, IonLabel, IonList, IonListHeader, IonSegment, IonSegmentButton, IonToolbar } from '@ionic/angular';
 import { ISSUE_BANDS, REPORTING_BANDS, issueBand, issueScore, partyColour, reportingBand, type MapLayer } from '@rumfa/shared';
 import { Api } from '../core/api';
+import { AppBar } from '../core/app-bar';
 import { AreaMap, type MapArea, type MapData } from '../core/area-map';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
@@ -13,12 +14,10 @@ import { Ui } from '../core/ui';
  */
 @Component({
   selector: 'page-coord-map',
-  imports: [PercentPipe, IonBackButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonListHeader, IonSegment,
-    IonSegmentButton, IonTitle, IonToolbar],
+  imports: [AppBar, PercentPipe, IonContent, IonItem, IonLabel, IonList, IonListHeader, IonSegment,
+    IonSegmentButton, IonToolbar],
   template: `
-  <ion-header>
-    <ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
-      <ion-title>{{ t('My area map') }}</ion-title></ion-toolbar>
+  <app-bar [title]="t('My area')" [sos]="false">
     <ion-toolbar>
       <ion-segment [value]="layer()" (ionChange)="setLayer($any($event.detail.value))">
         <ion-segment-button value="issues">{{ t('Issues') }}</ion-segment-button>
@@ -26,7 +25,7 @@ import { Ui } from '../core/ui';
         <ion-segment-button value="reporting">{{ t('Reporting') }}</ion-segment-button>
       </ion-segment>
     </ion-toolbar>
-  </ion-header>
+  </app-bar>
   <ion-content>
     <div class="crumbs">
       @for (b of data()?.breadcrumb ?? []; track b.code; let last = $last) {

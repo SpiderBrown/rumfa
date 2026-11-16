@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Network } from '@capacitor/network';
 import { encodeCallbackSms, encodeIncidentSms, encodeResultSms, type Severity } from '@rumfa/shared';
 import { Api, ApiError } from './api';
+import { Ui } from './ui';
 
 /**
  * Offline-first queue. Every report is saved on the phone first (IndexedDB),
@@ -49,6 +50,7 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 @Injectable({ providedIn: 'root' })
 export class Outbox {
   private api = inject(Api);
+  private ui = inject(Ui);
   /** Everything stored on this phone, for every person and organisation that has signed in here. */
   private readonly all = signal<OutItem[]>([]);
   /** Only the signed-in person's items, for the organisation they are signed in to now. Others stay stored until that person signs back in. */
@@ -106,16 +108,43 @@ export class Outbox {
     return encodeCallbackSms({ reason: i.payload['reason'], agentCode: code });
   }
 
-  /** Opens the phone's SMS app with the coded message ready; the agent taps Send. */
+  /**
+   * Opens the phone's SMS app with the coded message ready; the agent taps Send there. The app cannot see whether
+   * the SMS was sent (the agent may cancel), so when they come back it asks, and only a "yes" marks it as sent.
+   */
   async sendBySms(i: OutItem) {
     const body = encodeURIComponent(this.smsText(i));
     const sep = /iPhone|iPad/.test(navigator.userAgent) ? '&' : '?';
+    const back = this.returnedToApp();
     window.location.href = `sms:${window.RUMFA_CONFIG.smsNumber}${sep}body=${body}`;
+    await back;
+    if (!(await this.ui.confirm('Did the SMS go?', 'Only say yes if you pressed Send in your messages app.', 'Yes, sent', 'Not sent'))) return;
     i.smsSentAt = Date.now();
     // Results stay queued so the photo still uploads later (the server merges them);
     // incidents and callbacks without photos are done once the SMS is sent.
     if (i.kind === 'callback' || (i.kind === 'incident' && !i.photo)) i.status = 'sent';
     await this.put(i);
+  }
+
+  /** Resolves when the person comes back from the SMS app (or after a moment, if the app never left the screen). */
+  private returnedToApp(): Promise<void> {
+    return new Promise((resolve) => {
+      let left = false;
+      const onVis = () => {
+        if (document.hidden) { left = true; return; }
+        if (left) { document.removeEventListener('visibilitychange', onVis); setTimeout(resolve, 300); }
+      };
+      document.addEventListener('visibilitychange', onVis);
+      // Some phones open the SMS app in a way that never hides this page; ask after a short pause then
+      setTimeout(() => { if (!left) { document.removeEventListener('visibilitychange', onVis); resolve(); } }, 2500);
+    });
+  }
+
+  /** Sends a refused item again (e.g. after the server's problem was fixed). */
+  async retry(i: OutItem) {
+    i.status = 'waiting'; i.error = undefined;
+    await this.put(i);
+    await this.sync();
   }
 
   /** Items the signed-in person still has to send for this organisation. */

@@ -1,9 +1,14 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { RouterLink } from '@angular/router';
-import { IonBackButton, IonBadge, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote, IonRefresher,
-  IonRefresherContent, IonTitle, IonToolbar, ViewWillEnter } from '@ionic/angular';
+import { Router, RouterLink } from '@angular/router';
+import { IonBadge, IonContent, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote, IonRefresher,
+  IonRefresherContent, ViewWillEnter } from '@ionic/angular';
 import { Api } from '../core/api';
+import { AppBar } from '../core/app-bar';
+import { Calls } from '../core/calls';
+import { Ui } from '../core/ui';
+
+interface Coordinator { id: string; full_name: string; level: string; area_code: string }
 import { I18n } from '../core/i18n';
 import { categoryIcon } from '../core/categories';
 import { type Channel, channelPreview, channelSubtitle, channelTime, channelTitle } from '../core/channel-label';
@@ -16,13 +21,28 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
  */
 @Component({
   selector: 'page-messages',
-  imports: [NgTemplateOutlet, RouterLink, IonBackButton, IonBadge, IonButtons, IonContent, IonHeader, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
-    IonRefresher, IonRefresherContent, IonTitle, IonToolbar],
+  imports: [NgTemplateOutlet, RouterLink, AppBar, IonBadge, IonContent, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
+    IonRefresher, IonRefresherContent],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
-    <ion-title>{{ t('Messages') }}</ion-title></ion-toolbar></ion-header>
+  <app-bar [title]="t('Chats')" [sos]="api.atUnit()" />
   <ion-content>
     <ion-refresher slot="fixed" (ionRefresh)="refresh($event)"><ion-refresher-content /></ion-refresher>
+    @if (coordinator(); as c) {
+      <!-- The person agents reach most: pinned, with the three ways to reach them as labelled buttons -->
+      <div class="coord">
+        <div class="ctop">
+          <div class="avatar direct">{{ initialsOf(c.full_name) }}</div>
+          <div class="cw"><span class="cl">{{ t('My coordinator') }}</span><b>{{ c.full_name }}</b>
+            <span class="sub">{{ t(levelName(c.level)) }} · {{ c.area_code }}</span></div>
+        </div>
+        <div class="cacts">
+          <button (click)="message(c)"><ion-icon name="chatbubble" /><span>{{ t('Message') }}</span></button>
+          @if (calls.modes().length) { <button class="primary" (click)="call(c)"><ion-icon name="call" /><span>{{ t('Call') }}</span></button> }
+          <button routerLink="/callback"><ion-icon name="phone-portrait" /><span>{{ t('Call me back') }}</span></button>
+        </div>
+        <div class="hintline">{{ t('No airtime or data? Tap Call me back and they will ring you.') }}</div>
+      </div>
+    }
     <ion-list>
       @if (area().length) { <ion-list-header>{{ t('Teams') }}</ion-list-header> }
       @for (c of area(); track c.id) { <ng-container *ngTemplateOutlet="row; context: { $implicit: c }" /> }
@@ -55,6 +75,15 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
     </ng-template>
   </ion-content>`,
   styles: `
+    .coord { margin: 12px 12px 6px; padding: 12px; border-radius: 16px; background: #f1f8f3; border: 1px solid #d5eadb; }
+    .ctop { display: flex; align-items: center; gap: 12px; }
+    .cw { flex: 1; display: flex; flex-direction: column; min-width: 0; } .cw b { font-size: 16px; } .cl { font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .5px; color: var(--ion-color-primary); } .cw .sub { font-size: 12px; color: var(--ion-color-medium); }
+    .cacts { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; margin-top: 12px; }
+    .cacts button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 0; border-radius: 12px;
+      background: #fff; color: var(--ion-color-primary); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    .cacts button ion-icon { font-size: 22px; } .cacts button.primary { background: var(--ion-color-primary); color: #fff; }
+    .hintline { margin-top: 8px; font-size: 12px; color: var(--ion-color-medium); text-align: center; }
     .avatar { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-right: 12px;
       background: #e7f1ea; color: var(--ion-color-primary); font-weight: 700; }
     .avatar ion-icon { font-size: 22px; } .avatar.case { background: #fdeee4; color: #c2410c; } .avatar.direct { background: #e6eefb; color: #1d4ed8; }
@@ -70,8 +99,12 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
   `,
 })
 export default class MessagesPage implements OnDestroy, ViewWillEnter {
-  private api = inject(Api);
+  api = inject(Api);
+  calls = inject(Calls);
+  private router = inject(Router);
+  private ui = inject(Ui);
   t = inject(I18n).t;
+  coordinator = signal<Coordinator | null>(null);
   area = signal<Channel[]>([]);
   private all = signal<Channel[]>([]);
   loaded = signal(false);
@@ -80,12 +113,28 @@ export default class MessagesPage implements OnDestroy, ViewWillEnter {
   private stopLive = this.api.onChange(() => this.soon(), ['messages']);
   private pending: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() { void this.load(); }
+  constructor() { void this.load(); void this.loadCoordinator(); }
   /** Coming back from a chat: its unread count is now 0 */
   ionViewWillEnter() { if (this.loaded()) void this.load(); }
   ngOnDestroy() { this.stopLive(); this.unfollow.forEach((f) => f()); if (this.pending) clearTimeout(this.pending); }
 
   private soon() { if (!this.pending) this.pending = setTimeout(() => { this.pending = null; void this.load(); }, 1500); }
+
+  async loadCoordinator() {
+    if (this.api.isCoordinator() && this.api.me()?.level === 'state') return;
+    const c = await this.api.get<Coordinator | null>('/me/coordinator').catch(() => undefined);
+    if (c !== undefined) this.coordinator.set(c && c.id ? c : null);
+  }
+
+  private async directWith(c: Coordinator) { return (await this.api.post<{ channelId: string }>('/channels/direct', { otherId: c.id })).channelId; }
+  async message(c: Coordinator) {
+    try { await this.router.navigate(['/chat', await this.directWith(c)]); } catch (e) { await this.ui.error(e); }
+  }
+  async call(c: Coordinator) {
+    try { await this.calls.fromChat(await this.directWith(c), [{ id: c.id, full_name: c.full_name, role: 'coordinator' }]); } catch (e) { await this.ui.error(e); }
+  }
+  levelName(l: string) { return ({ ward: 'Ward coordinator', lga: 'LGA coordinator', state: 'State coordinator' } as Record<string, string>)[l] ?? 'Coordinator'; }
+  initialsOf(name: string) { return name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); }
 
   async load() {
     const [a, all] = await Promise.all([this.api.get<Channel[]>('/channels/area').catch(() => null), this.api.get<Channel[]>('/channels').catch(() => null)]);

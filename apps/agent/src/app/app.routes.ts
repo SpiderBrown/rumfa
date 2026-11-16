@@ -20,25 +20,41 @@ const checkedIn: CanActivateFn = (route) => {
   return r.parseUrl('/');
 };
 
+/** Where "/" lands: coordinators on their area, everyone else on Today. */
+const landing: CanActivateFn = () => inject(Router).parseUrl(inject(Api).isCoordinator() ? '/tabs/area' : '/tabs/today');
+
 export const routes: Routes = [
   { path: 'login', loadComponent: () => import('./pages/login').then((m) => m.default) },
   { path: 'lock', loadComponent: () => import('./pages/lock').then((m) => m.default) },
   { path: 'onboarding', loadComponent: () => import('./pages/onboarding').then((m) => m.default) },
-  { path: '', canActivate: [ready], loadComponent: () => import('./pages/home').then((m) => m.default) },
+  // Main sections as bottom tabs (by role); everything below opens on top of them
+  {
+    path: 'tabs', canActivate: [ready], loadComponent: () => import('./pages/tabs').then((m) => m.default),
+    children: [
+      { path: 'today', loadComponent: () => import('./pages/unit').then((m) => m.default) },
+      { path: 'chats', loadComponent: () => import('./pages/messages').then((m) => m.default) },
+      { path: 'me', loadComponent: () => import('./pages/me').then((m) => m.default) },
+      { path: 'area', loadComponent: () => import('./pages/coord-map').then((m) => m.default) },
+      { path: 'requests', loadComponent: () => import('./pages/coord-callbacks').then((m) => m.default) },
+      { path: '', pathMatch: 'full', redirectTo: 'today' },
+    ],
+  },
+  { path: '', pathMatch: 'full', canActivate: [ready, landing], children: [] },
   { path: 'report', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/report').then((m) => m.default) },
   { path: 'result', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/result').then((m) => m.default) },
-  { path: 'unit', canActivate: [ready], loadComponent: () => import('./pages/unit').then((m) => m.default) },
   { path: 'count', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/count').then((m) => m.default) },
-  { path: 'quick', redirectTo: 'count' },
-  { path: 'checklist', redirectTo: 'unit' },
   { path: 'callback', canActivate: [ready], loadComponent: () => import('./pages/callback').then((m) => m.default) },
-  { path: 'messages', canActivate: [ready], loadComponent: () => import('./pages/messages').then((m) => m.default) },
   { path: 'chat/:id', canActivate: [ready], loadComponent: () => import('./pages/chat').then((m) => m.default) },
-  { path: 'coord/callbacks', canActivate: [ready], loadComponent: () => import('./pages/coord-callbacks').then((m) => m.default) },
-  { path: 'coord/map', canActivate: [ready], loadComponent: () => import('./pages/coord-map').then((m) => m.default) },
   { path: 'coord/team', canActivate: [ready], loadComponent: () => import('./pages/coord-team').then((m) => m.default) },
   { path: 'coord/contact', canActivate: [ready], loadComponent: () => import('./pages/coord-contact').then((m) => m.default) },
   { path: 'live/:id', canActivate: [ready], loadComponent: () => import('./pages/live').then((m) => m.default) },
-  { path: 'help', canActivate: [ready], loadComponent: () => import('./pages/help').then((m) => m.default) },
+  // Older addresses (links, notifications) lead to the tabs
+  { path: 'unit', redirectTo: 'tabs/today' },
+  { path: 'checklist', redirectTo: 'tabs/today' },
+  { path: 'quick', redirectTo: 'count' },
+  { path: 'messages', redirectTo: 'tabs/chats' },
+  { path: 'help', redirectTo: 'tabs/me' },
+  { path: 'coord/map', redirectTo: 'tabs/area' },
+  { path: 'coord/callbacks', redirectTo: 'tabs/requests' },
   { path: '**', redirectTo: '' },
 ];

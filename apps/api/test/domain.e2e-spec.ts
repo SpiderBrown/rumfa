@@ -38,6 +38,26 @@ describe('API endpoints and webhooks (e2e)', () => {
   });
   afterAll(async () => { await app?.close(); });
 
+  it('my profile: field people update their own details; room staff cannot', async () => {
+    const r = await http.patch(api('/me/profile')).set(as(AGENT4))
+      .send({ fullName: '  Musa   Ibrahim ', email: 'Musa@Example.com', languages: ['ha', 'en'], network: 'mtn' }).expect(200);
+    expect(r.body).toMatchObject({ full_name: 'Musa Ibrahim', email: 'musa@example.com', languages: ['ha', 'en'], network: 'mtn' });
+    expect((await http.get(api('/me/context')).set(as(AGENT4)).expect(200)).body.me).toMatchObject({ full_name: 'Musa Ibrahim', email: 'musa@example.com' });
+    // Cleared, and refused when invalid
+    expect((await http.patch(api('/me/profile')).set(as(AGENT4)).send({ email: null }).expect(200)).body).toMatchObject({ email: null });
+    await http.patch(api('/me/profile')).set(as(AGENT4)).send({ email: 'not an email' }).expect(400);
+    await http.patch(api('/me/profile')).set(as(AGENT4)).send({ network: 'etisalat' }).expect(400);
+    await http.patch(api('/me/profile')).set(as(AGENT4)).send({ fullName: 'A' }).expect(400);
+    await http.patch(api('/me/profile')).set(as(SUP)).send({ fullName: 'Someone Else' }).expect(403);
+    await http.patch(api('/me/profile')).set(as(AGENT4)).send({ fullName: 'Agent 004' }).expect(200); // as the other tests expect
+  });
+
+  it('my coordinator: the nearest one above my area', async () => {
+    const c = (await http.get(api('/me/coordinator')).set(as(AGENT3)).expect(200)).body;
+    expect(c).toMatchObject({ id: WARD, level: 'ward' });
+    expect('19-28-02-003'.startsWith(c.area_code)).toBe(true);
+  });
+
   it('context: brand, elections, parties and categories for the signed-in client', async () => {
     const r = await http.get(api('/me/context')).set(as(AGENT3)).expect(200);
     expect(r.body.me).toMatchObject({ id: AGENT3, brand: 'ALAWA', role: 'agent' });

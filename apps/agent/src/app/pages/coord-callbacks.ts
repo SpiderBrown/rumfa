@@ -1,7 +1,8 @@
 import { Component, OnDestroy, inject, signal } from '@angular/core';
-import { IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonTitle, IonToolbar } from '@ionic/angular';
+import { IonButton, IonContent, IonItem, IonLabel, IonList } from '@ionic/angular';
 import { CALLBACK_REASONS } from '@rumfa/shared';
 import { Api } from '../core/api';
+import { AppBar } from '../core/app-bar';
 import { I18n } from '../core/i18n';
 import { Ui } from '../core/ui';
 import { AgoPipe } from '../core/clock';
@@ -9,10 +10,9 @@ import { AgoPipe } from '../core/clock';
 /** Coordinator's callback queue. Call rings the coordinator's phone first, then connects the agent (normal phone lines). */
 @Component({
   selector: 'page-coord-callbacks',
-  imports: [IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonItem, IonLabel, IonList, IonTitle, IonToolbar, AgoPipe],
+  imports: [AppBar, IonButton, IonContent, IonItem, IonLabel, IonList, AgoPipe],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
-    <ion-title>{{ t('Callback requests') }}</ion-title></ion-toolbar></ion-header>
+  <app-bar [title]="t('Callback requests')" [sos]="false" />
   <ion-content>
     <ion-list>
       @for (r of rows(); track r.id) {

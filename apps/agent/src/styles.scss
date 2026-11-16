@@ -25,3 +25,6 @@ ion-button { --border-radius: 12px; min-height: 52px; font-size: 1.05rem; text-t
 .tile.done ion-icon { color: #0b6b3a; }
 .hint { color: var(--ion-color-medium); font-size: 0.9rem; }
 .num input { font-size: 1.4rem !important; text-align: right; }
+
+/* Alerts whose message has paragraphs */
+.pre-line .alert-message { white-space: pre-line; text-align: left; }

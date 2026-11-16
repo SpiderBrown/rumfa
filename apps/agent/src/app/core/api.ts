@@ -6,7 +6,7 @@ declare global {
 }
 
 export interface Me {
-  id: string; tenant_id: string; full_name: string; phone: string; role: string; level: string; area_code: string;
+  id: string; tenant_id: string; full_name: string; phone: string; email?: string | null; role: string; level: string; area_code: string;
   agent_code: string | null; languages: string[]; network: string | null; onboarded_at: string | null; deputy_of: string | null; brand: string;
 }
 /** Ways the organisation lets people call from the app (its admins switch these on or off). */
@@ -147,6 +147,7 @@ export class Api {
   get<T = any>(path: string, query?: Record<string, unknown>) { return this.call<T>('GET', path + qs(query)); }
   post<T = any>(path: string, body?: unknown) { return this.call<T>('POST', path, body); }
   put<T = any>(path: string, body?: unknown) { return this.call<T>('PUT', path, body); }
+  patch<T = any>(path: string, body?: unknown) { return this.call<T>('PATCH', path, body); }
 
   private async call<T>(method: string, path: string, body?: unknown, auth = true, retried = false): Promise<T> {
     const headers: Record<string, string> = {};

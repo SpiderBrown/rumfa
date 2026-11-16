@@ -1,6 +1,6 @@
-import { Body, Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsIn, IsString, MaxLength } from 'class-validator';
+import { Body, Controller, Get, HttpCode, Patch, Post, Put } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { ArrayMaxSize, IsArray, IsEmail, IsIn, IsOptional, IsString, Length, MaxLength, ValidateIf } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
@@ -11,6 +11,12 @@ import { callSettings, ownParty, tenantSettings } from '../common/tenant-setting
 class OnboardingDto {
   @ApiProperty({ enum: ['mtn', 'airtel', 'glo', '9mobile'] }) @IsIn(['mtn', 'airtel', 'glo', '9mobile']) network: string;
   @ApiProperty() @IsArray() @ArrayMaxSize(12) @IsString({ each: true }) @MaxLength(5, { each: true }) languages: string[];
+}
+class ProfileDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @Length(3, 80) fullName?: string;
+  @ApiPropertyOptional({ nullable: true }) @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsEmail() @MaxLength(120) email?: string | null;
+  @ApiPropertyOptional() @IsOptional() @IsArray() @ArrayMaxSize(12) @IsString({ each: true }) @MaxLength(5, { each: true }) languages?: string[];
+  @ApiPropertyOptional({ enum: ['mtn', 'airtel', 'glo', '9mobile'] }) @IsOptional() @IsIn(['mtn', 'airtel', 'glo', '9mobile']) network?: string;
 }
 class DeviceTokenDto {
   @ApiProperty() @IsString() @MaxLength(400) token: string;
@@ -25,6 +31,21 @@ class StatusDto {
 @Controller('me')
 export class ContextController {
   constructor(private readonly db: Db) {}
+
+  /**
+   * The coordinator closest to me: the one whose area is the longest part of mine (ward, then LGA, then state).
+   * Shown pinned at the top of the agent's chats with Message and Call.
+   */
+  @Get('coordinator')
+  @ApiOperation({ summary: 'My nearest coordinator (ward, else LGA, else state)' })
+  async coordinator(@CurrentUser() user: AuthUser) {
+    const [c] = await this.db.system(
+      `select v.id, v.full_name, v.level, v.area_code from public.volunteers v
+        where v.tenant_id = $1 and v.role = 'coordinator' and v.status = 'active' and v.id <> $2
+          and $3 like v.area_code || '%' and v.deputy_of is null
+        order by length(v.area_code) desc, v.full_name limit 1`, [user.tid, user.mid, user.area ?? '']);
+    return c ?? null;
+  }
 
   @Get('context')
   @ApiOperation({ summary: 'Everything the apps need after sign-in: profile, brand, elections, ballot parties, categories' })
@@ -49,6 +70,27 @@ export class ContextController {
   @Post('onboarding') @HttpCode(204)
   async onboarding(@CurrentUser() user: AuthUser, @Body() dto: OnboardingDto) {
     await this.db.asUser(user, (q) => callFn(q, 'complete_onboarding', { p_network: dto.network, p_languages: dto.languages }));
+  }
+
+  /**
+   * The person's own details: name, email, languages, mobile network. Field roles only (room staff sign in
+   * with their email, which their admins manage). The phone number is the sign-in and is changed by a coordinator.
+   */
+  @Patch('profile') @Roles('agent', 'volunteer', 'coordinator')
+  @ApiOperation({ summary: 'Update my own profile' })
+  async profile(@CurrentUser() user: AuthUser, @Body() d: ProfileDto) {
+    const sets: string[] = [];
+    const vals: unknown[] = [user.mid, user.tid];
+    const add = (col: string, v: unknown) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
+    if (d.fullName !== undefined) add('full_name', d.fullName.trim().split(/\s+/).join(' '));
+    if (d.email !== undefined) add('email', d.email ? d.email.trim().toLowerCase() : null);
+    if (d.languages !== undefined) add('languages', d.languages);
+    if (d.network !== undefined) { add('network', d.network); sets.push('network_confirmed_at = now()'); }
+    if (sets.length) {
+      await this.db.system(`update public.volunteers set ${sets.join(', ')}, updated_at = now() where id = $1 and tenant_id = $2`, vals);
+    }
+    const [me] = await this.db.system(`select full_name, email, languages, network from public.volunteers where id = $1`, [user.mid]);
+    return me;
   }
 
   @Post('device-tokens') @HttpCode(204)

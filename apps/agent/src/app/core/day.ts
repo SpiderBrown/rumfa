@@ -24,7 +24,7 @@ const TASKS: Record<DayStage, Task[]> = {
   arrival: [{ kind: 'checkin' }, Q('agent_allowed')],
   setup: [Q('officials_present'), Q('materials_present'), Q('security_present'), { kind: 'figures', stage: 'setup', fields: ['registered', 'ballots_received'] }],
   // Accreditation first (start time, counts, its checks), then voting once accreditation is under way
-  voting: [Q('start_time'), { kind: 'accreditation' }, Q('bvas_working'), Q('voters_turned_away'), Q('voting_started'), { kind: 'report' }],
+  voting: [Q('start_time'), { kind: 'accreditation' }, Q('bvas_working'), Q('voters_turned_away'), Q('voting_started')],
   close: [Q('voting_ended'), { kind: 'figures', stage: 'close', fields: ['accredited', 'unused', 'spoiled'] }],
   counting: [Q('count_public'), { kind: 'count' }],
   result: [{ kind: 'result' }, Q('ec8a_signed')],

@@ -5,6 +5,7 @@ import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn, selectFn } from '../common/fn';
+import { withCasePlaces } from './case-places';
 import { ROOM, SUPERVISORS } from './roles';
 
 class TextDto { @ApiProperty() @IsString() @MinLength(1) @MaxLength(4000) text: string; }
@@ -27,9 +28,9 @@ export class CasesController {
 
   /** Cases the caller may see (the database decides by role and area). */
   @Get('cases')
-  list(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('queue') queue?: string, @Query('mine') mine?: string,
+  async list(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('queue') queue?: string, @Query('mine') mine?: string,
        @Query('sinceHours') sinceHours?: string) {
-    return this.db.asUser(user, (q) => q(
+    return withCasePlaces(this.db, await this.db.asUser(user, (q) => q(
       `select * from public.cases
         where tenant_id = $1
           and ($2::text is null or status = any(string_to_array($2, ',')))
@@ -37,7 +38,7 @@ export class CasesController {
           and ($4::boolean is not true or assigned_to = $5)
           and ($6::int is null or updated_at >= now() - make_interval(hours => $6))
         order by created_at desc limit 500`,
-      [user.tid, status || null, queue || null, mine === 'true', user.mid, sinceHours ? Number(sinceHours) : null]));
+      [user.tid, status || null, queue || null, mine === 'true', user.mid, sinceHours ? Number(sinceHours) : null])));
   }
 
   @Get('queues/counts') @Roles(...ROOM)
@@ -82,12 +83,13 @@ export class CasesController {
         `select id, agency, title, person_name, level, area_code, status, source_type, last_call_ok_at from public.authority_contacts
           where tenant_id = $1 and area_code = any($2) and status <> 'rejected'`, [user.tid, [...chain, 'NG']]);
       const mergeTargets = ROOM.includes(user.role) ? await q(
-        `select id, title, status, severity, pu_code, area_code, created_at from public.cases
+        `select id, title, category, report_count, status, severity, pu_code, area_code, created_at from public.cases
           where tenant_id = $1 and category = $2 and id <> $3 and status in ('queued','assigned','in_progress','escalated')
             and area_code like $4 || '%' order by created_at desc limit 20`,
         [user.tid, c.category, id, c.area_code.slice(0, 8)]) : [];
-      return { case: c, incidents, alerts, events, suggestions, channelId: channel?.id ?? null, messages, liveView: liveView ?? null,
-               latestResult: result ?? null, people, contacts, mergeTargets };
+      const [placed] = await withCasePlaces(this.db, [c]);
+      return { case: placed, incidents, alerts, events, suggestions, channelId: channel?.id ?? null, messages, liveView: liveView ?? null,
+               latestResult: result ?? null, people, contacts, mergeTargets: await withCasePlaces(this.db, mergeTargets) };
     });
   }
 

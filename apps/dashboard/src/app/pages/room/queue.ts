@@ -9,10 +9,10 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
-import { AgoPipe, SEVERITY_COLOR, Ui, label } from '../../core/ui';
+import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine, type CasePlace } from '../../core/ui';
 
 export interface CaseRow {
-  id: string; title: string; category: string; severity: string; status: string; pu_code: string | null; area_code: string;
+  id: string; title: string; what?: string | null; where?: CasePlace | null; category: string; severity: string; status: string; pu_code: string | null; area_code: string;
   report_count: number; reporter_count: number; assigned_to: string | null; queue_id: string; created_at: string;
   ack_due_at: string | null; due_at: string | null; escalation_level: number; incident_group_id: string | null;
 }
@@ -54,8 +54,9 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
     <ng-container matColumnDef="severity"><th mat-header-cell *matHeaderCellDef>Severity</th>
       <td mat-cell *matCellDef="let c"><span class="sev" [style.background]="sevColor[c.severity]">{{ c.severity }}</span></td></ng-container>
     <ng-container matColumnDef="title"><th mat-header-cell *matHeaderCellDef>Case</th>
-      <td mat-cell *matCellDef="let c"><a [routerLink]="['/room/case', c.id]">{{ c.title }}</a>
-        @if (c.incident_group_id) { <mat-icon class="small" matTooltip="Part of a linked incident group">link</mat-icon> }</td></ng-container>
+      <td mat-cell *matCellDef="let c"><a [routerLink]="['/room/case', c.id]" [title]="c.title">{{ c.what ?? c.title }}</a>
+        @if (c.incident_group_id) { <mat-icon class="small" matTooltip="Part of a linked incident group">link</mat-icon> }
+        @if (c.where) { <div class="where">{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }</td></ng-container>
     <ng-container matColumnDef="reports"><th mat-header-cell *matHeaderCellDef>Reports</th>
       <td mat-cell *matCellDef="let c">{{ c.report_count }} from {{ c.reporter_count || 0 }}</td></ng-container>
     <ng-container matColumnDef="status"><th mat-header-cell *matHeaderCellDef>Status</th>
@@ -74,6 +75,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
     .head { display: flex; align-items: center; gap: 12px; } .spacer { flex: 1; } h1 { font: var(--mat-sys-headline-small); margin: 0; }
     .queues { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 16px 0; }
     .q { padding: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; } .q.sel { outline: 2px solid var(--mat-sys-primary); }
+    .where { font-size: 12px; color: var(--mat-sys-on-surface-variant); } .where .code { color: var(--mat-sys-outline); margin-left: 2px; }
     .qname { font: var(--mat-sys-title-small); } .qnums { display: flex; gap: 10px; flex-wrap: wrap; font: var(--mat-sys-body-small); }
     .warn { color: #c25700; } .crit { color: #b3261e; font-weight: 600; }
     .sev { color: white; border-radius: 10px; padding: 2px 8px; font-size: 12px; text-transform: capitalize; }
@@ -88,6 +90,7 @@ export class QueuePage implements OnDestroy {
   private router = inject(Router);
   label = label;
   sevColor = SEVERITY_COLOR;
+  place = (w: CasePlace) => placeLine(w);
   cols = ['severity', 'title', 'reports', 'status', 'owner', 'due', 'age'];
   viewSig = signal<'mine' | 'open' | 'closed'>('open');
   get view() { return this.viewSig(); } set view(v) { this.viewSig.set(v); void this.load(); }

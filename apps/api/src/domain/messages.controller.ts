@@ -8,6 +8,7 @@ import { callFn, selectFn } from '../common/fn';
 import { ProvidersService } from '../common/providers.service';
 import { CALL_MODES, type CallMode, requireCallMode } from '../common/tenant-settings';
 import { AppCallsService } from './app-calls.service';
+import { describeChannels } from './channel-labels';
 
 class MessageDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(4000) body?: string;
@@ -29,15 +30,22 @@ export class MessagesController {
 
   /** Channels the caller belongs to (the database decides: case, area and direct channels). */
   @Get()
-  list(@CurrentUser() u: AuthUser) {
-    return this.db.asUser(u, (q) => q(
+  async list(@CurrentUser() u: AuthUser) {
+    const rows = await this.db.asUser(u, (q) => q(
       `select c.*, (select max(created_at) from public.messages m where m.channel_id = c.id) as last_at
          from public.channels c where c.tenant_id = $1 order by last_at desc nulls last, c.created_at desc limit 100`, [u.tid]));
+    return this.withLabels(u, rows);
+  }
+
+  /** Adds names, the last message and the unread count (see channel-labels). */
+  private async withLabels(u: AuthUser, rows: any[]) {
+    const info = await describeChannels(this.db, u.mid, rows.map((r) => r.id));
+    return rows.map((r) => ({ ...r, ...info.get(r.id) }));
   }
 
   @Get('area')
-  area(@CurrentUser() u: AuthUser) {
-    return this.db.asUser(u, (q) => selectFn(q, 'my_area_channels'));
+  async area(@CurrentUser() u: AuthUser) {
+    return this.withLabels(u, await this.db.asUser(u, (q) => selectFn(q, 'my_area_channels')));
   }
 
   @Post('direct')
@@ -53,7 +61,7 @@ export class MessagesController {
       const messages = await selectFn(q, 'channel_messages', { p_channel: id, p_limit: 200 });
       await q(`insert into public.channel_reads (channel_id, volunteer_id, last_read_at) values ($1, $2, now())
                on conflict (channel_id, volunteer_id) do update set last_read_at = now()`, [id, u.mid]);
-      return { channel, messages: messages.reverse() };
+      return { channel: { ...channel, ...(await describeChannels(this.db, u.mid, [id])).get(id) }, messages: messages.reverse() };
     });
   }
 

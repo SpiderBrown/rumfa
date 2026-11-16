@@ -101,3 +101,10 @@ export const SEVERITY_COLOR: Record<string, string> = { critical: '#b3261e', hig
 export function label(s: string | null | undefined): string {
   return (s ?? '').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
+
+/** Where a case is, for people: "Kofar Fada Pri. Sch. · Tudun Wada · Gwale LGA · Kano", code shown separately. */
+export interface CasePlace { name: string; parents: string[]; code: string; level: string }
+export function placeLine(w: CasePlace | null | undefined, withParents = true): string {
+  if (!w) return '';
+  return [w.name !== w.code ? w.name : null, ...(withParents ? w.parents : [])].filter(Boolean).join(' · ');
+}

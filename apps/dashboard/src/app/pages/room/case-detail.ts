@@ -15,7 +15,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
 import { Calls } from '../../core/calls';
-import { AgoPipe, SEVERITY_COLOR, Ui, label } from '../../core/ui';
+import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine } from '../../core/ui';
 import { LiveViewer } from './live-viewer';
 import type { CaseRow } from './queue';
 
@@ -31,8 +31,9 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
   <a routerLink="/room" class="back"><mat-icon>arrow_back</mat-icon> Queue</a>
   <div class="title">
     <span class="sev" [style.background]="sevColor[c.severity]">{{ c.severity }}</span>
-    <h1>{{ c.title }}</h1>
+    <h1>{{ c.what ?? c.title }}</h1>
   </div>
+  @if (c.where) { <div class="where"><mat-icon>place</mat-icon>{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }
   <div class="meta">
     {{ label(c.status) }} · {{ c.report_count }} reports from {{ c.reporter_count }} people · opened {{ c.created_at | ago }}
     @if (c.status === 'assigned') { · acknowledge {{ c.ack_due_at | ago }} } @else if (!['resolved','closed','merged'].includes(c.status)) { · due {{ c.due_at | ago }} }
@@ -62,7 +63,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
       <mat-menu #sev>@for (s of ['critical','high','medium','low']; track s) {
         <button mat-menu-item (click)="changeSeverity(s)">{{ label(s) }}</button> }</mat-menu>
       <mat-menu #merge>@for (o of mergeTargets(); track o.id) {
-        <button mat-menu-item (click)="mergeInto(o)">{{ o.title }} ({{ o.report_count }} reports)</button> }
+        <button mat-menu-item (click)="mergeInto(o)">{{ o.what ?? o.title }} · {{ place(o.where, false) || o.pu_code || o.area_code }} ({{ o.report_count }} reports)</button> }
         @empty { <button mat-menu-item disabled>No open cases nearby</button> }</mat-menu>
     }
   </div>
@@ -173,6 +174,8 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
   }`,
   styles: `
     .back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; color: var(--mat-sys-primary); }
+    .where { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-on-surface-variant); margin-bottom: 4px; }
+    .where mat-icon { font-size: 18px; width: 18px; height: 18px; } .where .code { color: var(--mat-sys-outline); font-size: 12px; margin-left: 4px; }
     .title { display: flex; gap: 12px; align-items: center; } h1 { font: var(--mat-sys-headline-small); margin: 8px 0; }
     .meta { color: var(--mat-sys-on-surface-variant); margin-bottom: 12px; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -299,7 +302,7 @@ export class CaseDetailPage implements OnDestroy {
   async reopen() { const b = await this.ui.prompt('Reopen case', 'Reason'); if (b) await this.act('reopen', { text: b }, 'Reopened'); }
   async changeSeverity(s: string) { const b = await this.ui.prompt(`Change severity to ${s}`, 'Reason'); if (b) await this.act('severity', { severity: s, reason: b }, 'Severity changed'); }
   async mergeInto(t: CaseRow) {
-    if (!(await this.ui.confirm('Merge cases', `Move all reports of this case into "${t.title}"? You can undo this later.`, 'Merge'))) return;
+    if (!(await this.ui.confirm('Merge cases', `Move all reports of this case into "${t.what ?? t.title}${t.where ? ' at ' + (placeLine(t.where, false) || t.where.code) : ''}"? You can undo this later.`, 'Merge'))) return;
     await this.ui.run(() => this.api.post(`/cases/${this.id()}/merge`, { target: t.id }), 'Merged');
     await this.load(this.id());
   }
@@ -316,6 +319,7 @@ export class CaseDetailPage implements OnDestroy {
     if (r) this.liveRequest.set({ id: r.requestId, status: 'requested' });
   }
   call(p: Person) { void this.callsSvc.call('volunteer', p.id, p.full_name, this.id()); }
+  place(w: any, withParents = true) { return placeLine(w, withParents); }
   callContact(k: Contact) { void this.callsSvc.call('contact', k.id, `${k.agency} ${k.title}`, this.id()); }
   async send() {
     const ch = this.channelId(); const body = this.draft.trim();

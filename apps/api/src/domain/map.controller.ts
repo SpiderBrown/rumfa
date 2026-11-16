@@ -10,6 +10,11 @@ import { spreadAround, spreadInside, type Spot } from './approx-places';
 /** Open case statuses shown on the map. */
 const OPEN = ['queued', 'assigned', 'in_progress', 'escalated'];
 const LEVEL_OF_LEN: Record<number, string> = { 2: 'state', 5: 'lga', 8: 'ward', 12: 'pu' };
+/** Geopolitical zones (states.zone); on the map as Z-NC etc. */
+export const ZONES: Record<string, string> = {
+  NC: 'North Central', NE: 'North East', NW: 'North West', SE: 'South East', SS: 'South South', SW: 'South West',
+};
+const isZone = (c: string) => /^Z-(NC|NE|NW|SE|SS|SW)$/.test(c);
 
 /** The area a person may see on the map: everything for national staff, otherwise their own area and below. */
 export function mapScope(u: AuthUser): string {
@@ -42,23 +47,32 @@ export class MapController {
             @Query('group') groupQ?: string) {
     const scope = mapScope(u);
     const parent = (parentQ || scope).trim();
-    if (!/^(NG|\d{2}(-\d{2}){0,2}|\d{2}-SD\d)$/.test(parent)) throw new BadRequestException('Unknown area');
+    if (!/^(NG|\d{2}(-\d{2}){0,2}|\d{2}-SD\d)$/.test(parent) && !isZone(parent)) throw new BadRequestException('Unknown area');
     const district = /^\d{2}-SD\d$/.test(parent);
-    if (!inScope(scope, district ? parent.slice(0, 2) : parent)) throw new ForbiddenException('That area is outside yours');
-    // Senatorial districts: a state can be shown by district (group=senatorial); a district shows its LGAs
-    const bySenatorial = groupQ === 'senatorial' && parent.length === 2 && parent !== 'NG';
-    const len = district ? 5 : childLength(parent)!;
-    const prefix = parent === 'NG' ? '%' : district ? `${parent.slice(0, 2)}-%` : `${parent}-%`;
-    /** The sub-area a unit, case or person belongs to: the first part of its code, or (by district) its LGA's district */
-    const key = (col: string) => bySenatorial ? `(select l.senatorial_code from public.lgas l where l.code = left(${col}, 5))` : `left(${col}, $5)`;
+    const zone = isZone(parent);
+    if (zone ? scope !== 'NG' : !inScope(scope, district ? parent.slice(0, 2) : parent)) throw new ForbiddenException('That area is outside yours');
+    // group: comma list. zone = the country by geopolitical zone (a zone shows its states); senatorial = a state by
+    // senatorial district (a district shows its LGAs). Both stay on while going down, so the path shows them.
+    const groups = new Set((groupQ ?? '').split(','));
+    const byZone = groups.has('zone') && parent === 'NG' && scope === 'NG';
+    const bySenatorial = groups.has('senatorial') && parent.length === 2 && parent !== 'NG';
+    const len = district ? 5 : zone ? 2 : childLength(parent)!;
+    const prefix = parent === 'NG' || zone ? '%' : district ? `${parent.slice(0, 2)}-%` : `${parent}-%`;
+    /** The sub-area a unit, case or person belongs to: the first part of its code, or its LGA's district, or its state's zone */
+    const key = (col: string) => bySenatorial ? `(select l.senatorial_code from public.lgas l where l.code = left(${col}, 5))`
+      : byZone ? `(select 'Z-' || s.zone from public.states s where s.code = left(${col}, 2))` : `left(${col}, $5)`;
 
     const el = await this.db.asUser(u, (q) => elections(q, u.tid));
     const election = electionQ || el.live;
     if (electionQ && electionQ !== el.live && electionQ !== el.baseline) throw new BadRequestException('Unknown election');
 
+    const covered = `exists (select 1 from public.tenant_coverage c where c.tenant_id = $1 and (c.level = 'national' or c.area_code = s.code or c.area_code like s.code || '-%'))`;
+    const zoneNames = `(values ${Object.entries(ZONES).map(([k, v]) => `('${k}', '${v}')`).join(', ')}) as z(zone, name)`;
     const kidsSql = {
-      2: `select s.code, s.name from public.states s
-           where exists (select 1 from public.tenant_coverage c where c.tenant_id = $1 and (c.level = 'national' or c.area_code = s.code or c.area_code like s.code || '-%'))`,
+      2: byZone ? `select 'Z-' || z.zone as code, z.name from ${zoneNames}
+                    where exists (select 1 from public.states s where s.zone = z.zone and ${covered})`
+        : zone ? `select s.code, s.name from public.states s where s.zone = right($4, 2) and ${covered}`
+        : `select s.code, s.name from public.states s where ${covered}`,
       5: district ? `select code, name from public.lgas where senatorial_code = $4`
         : bySenatorial ? `select code, name from public.senatorial_districts where state_code = $4`
         : `select code, name from public.lgas where state_code = $4`,
@@ -110,7 +124,7 @@ export class MapController {
          select ${key('area_code')} as k,
                 count(*) filter (where role = 'agent')::int as agents,
                 (array_agg(jsonb_build_object('id', id, 'full_name', full_name) order by full_name)
-                   filter (where role = 'coordinator' and length(area_code) = $5 and not ${bySenatorial}))[1] as coordinator
+                   filter (where role = 'coordinator' and length(area_code) = $5 and not ${bySenatorial || byZone}))[1] as coordinator
            from public.volunteers where tenant_id = $1 and status in ('invited', 'active') and area_code like $3 group by 1),
        spots as (
          select pu_code as k, avg(lat) as lat, avg(lng) as lng from public.checkins
@@ -160,10 +174,10 @@ export class MapController {
       : [];
 
     return {
-      scope, parent, level: parent === 'NG' ? 'national' : district ? 'senatorial' : LEVEL_OF_LEN[parent.length],
-      childLevel: bySenatorial ? 'senatorial' : LEVEL_OF_LEN[len], group: bySenatorial || district ? 'senatorial' : null,
+      scope, parent, level: parent === 'NG' ? 'national' : zone ? 'zone' : district ? 'senatorial' : LEVEL_OF_LEN[parent.length],
+      childLevel: byZone ? 'zone' : bySenatorial ? 'senatorial' : LEVEL_OF_LEN[len], group: byZone || zone ? 'zone' : bySenatorial || district ? 'senatorial' : null,
       election, parties, partyColours: t?.settings?.party_colours ?? {},
-      breadcrumb: await this.breadcrumb(scope, parent, groupQ === 'senatorial' || district),
+      breadcrumb: await this.breadcrumb(scope, parent, groups.has('senatorial') || district, groups.has('zone') || zone),
       shape: shape?.geometry ?? null,
       center: shape ? { lat: shape.center_lat, lng: shape.center_lng } : approxArea ? { lat: approxArea.lat, lng: approxArea.lng } : null,
       approxArea,
@@ -184,18 +198,27 @@ export class MapController {
     return i < 0 ? null : spreadInside(lga.geometry, list.length)[i];
   }
 
-  /** From the person's own area down to `parent`, with names; by district, the district sits between state and LGA. */
-  private async breadcrumb(scope: string, parent: string, senatorial = false) {
-    let path = parent === 'NG' ? [] : /^\d{2}-SD\d$/.test(parent) ? [parent.slice(0, 2), parent] : chain(parent);
+  /**
+   * From the person's own area down to `parent`, with names; by district, the district sits between state and LGA;
+   * by zone (national staff only), the zone sits between Nigeria and the state.
+   */
+  private async breadcrumb(scope: string, parent: string, senatorial = false, zones = false) {
+    let path = parent === 'NG' ? [] : isZone(parent) ? [parent] : /^\d{2}-SD\d$/.test(parent) ? [parent.slice(0, 2), parent] : chain(parent);
     if (senatorial && parent.length >= 5 && !parent.includes('SD')) {
       const [l] = await this.db.system(`select senatorial_code from public.lgas where code = $1`, [parent.slice(0, 5)]);
       if (l?.senatorial_code) path = [path[0], l.senatorial_code, ...path.slice(1)];
     }
-    const codes = parent === 'NG' ? ['NG'] : [...(scope === 'NG' ? ['NG'] : []), ...path.filter((c) => inScope(scope, c.includes('SD') ? c.slice(0, 2) : c))];
+    if (zones && scope === 'NG' && parent !== 'NG' && !isZone(parent)) {
+      const [s] = await this.db.system(`select zone from public.states where code = $1`, [parent.slice(0, 2)]);
+      if (s?.zone) path = [`Z-${s.zone}`, ...path];
+    }
+    const codes = parent === 'NG' ? ['NG'] : [...(scope === 'NG' ? ['NG'] : []),
+      ...path.filter((c) => isZone(c) ? scope === 'NG' : inScope(scope, c.includes('SD') ? c.slice(0, 2) : c))];
     const names = await this.db.system(
       `select code, name from public.states where code = any($1) union all select code, name from public.lgas where code = any($1)
        union all select code, name from public.wards where code = any($1) union all select code, name from public.senatorial_districts where code = any($1)`, [codes]);
-    return codes.map((code) => ({ code, name: code === 'NG' ? 'Nigeria' : names.find((n) => n.code === code)?.name ?? code }));
+    return codes.map((code) => ({ code, name: code === 'NG' ? 'Nigeria' : isZone(code) ? ZONES[code.slice(2)]
+      : names.find((n) => n.code === code)?.name ?? code }));
   }
 }
 

@@ -8,6 +8,7 @@
 //
 // Usage (after `npm run build`):
 //   npm run import:boundaries -- --level state --file nga_admin1.geojson
+//     (also saves the six geopolitical zones' outlines: each zone's states merged into one)
 //   npm run import:boundaries -- --level lga   --file nga_admin2.geojson
 //   npm run import:boundaries -- --level ward  --file nga_wards.geojson
 //   npm run import:boundaries -- --level senatorial --file nga_senatorialdistricts.geojson
@@ -15,6 +16,7 @@
 // Options: --name <property> --state <property> --lga <property> override the name fields if auto-detection
 //          picks the wrong ones; --source "<text>" records where the data came from.
 import { readFileSync } from 'node:fs';
+import { union, type MultiPolygon } from 'polygon-clipping';
 import { center, normName, simplify, type Geometry } from './geo';
 import { arg, log, withDb, type Q } from './run';
 import { pointInGeometry } from '../shared';
@@ -26,7 +28,7 @@ const FIELDS = {
   ward: ['wardname', 'ward_name', 'adm3_name', 'admin3Name_en', 'ADM3_EN', 'adm3_en', 'NAME_3', 'ward', 'Ward', 'name'],
   senatorial: ['sendist_en', 'sendistrefname', 'senatorial', 'name'],
 };
-const TOLERANCE = { state: 0.01, senatorial: 0.005, lga: 0.003, ward: 0.0008 }; // degrees (~1 km, 300 m, 90 m)
+const TOLERANCE = { zone: 0.01, state: 0.01, senatorial: 0.005, lga: 0.003, ward: 0.0008 }; // degrees (~1 km, 300 m, 90 m)
 // Names that differ between INEC and the boundary sources
 const STATE_ALIASES: Record<string, string> = { fct: 'federalcapitalterritory', abuja: 'federalcapitalterritory', nassarawa: 'nasarawa' };
 // LGA names that differ between INEC (our geography) and OCHA, as normalised names: INEC -> OCHA. Add more as found.
@@ -67,7 +69,7 @@ void withDb(async (q) => {
   log('boundaries', `${features.length} ${level} shapes; name fields`, field);
   if (!field[level]) throw new Error(`Could not find the ${level} name field; pass --name <property>. Fields: ${Object.keys(props).join(', ')}`);
 
-  const states = await q<{ code: string; name: string }>(`select code, name from public.states`);
+  const states = await q<{ code: string; name: string; zone: string | null }>(`select code, name, zone from public.states`);
   const lgas = await q<{ code: string; state_code: string; name: string }>(`select code, state_code, name from public.lgas`);
   const wards = await q<{ code: string; lga_code: string; name: string }>(`select code, lga_code, name from public.wards`);
   const stateKey = (n: string) => { const k = normName(n); return STATE_ALIASES[k] ?? k; };
@@ -77,6 +79,7 @@ void withDb(async (q) => {
 
   const unmatched: string[] = [];
   const toSave: ShapeRow[] = [];
+  const stateShapes = new Map<string, Geometry>(); // full detail, for merging into zones
   for (const f of features) {
     const p = f.properties ?? {};
     const g = f.geometry as Geometry;
@@ -94,11 +97,39 @@ void withDb(async (q) => {
     const shape = simplify(g, TOLERANCE[level]);
     const c = center(shape);
     toSave.push({ code, level, geometry: shape, center_lat: c.lat, center_lng: c.lng, source: arg('--source') ?? file.split('/').pop()! });
+    if (level === 'state') stateShapes.set(code, g);
   }
   await saveShapes(q, toSave);
   log('boundaries', `saved ${toSave.length} ${level} shapes`);
+  if (level === 'state') await saveZones(q, states, stateShapes, arg('--source') ?? file.split('/').pop()!);
   if (unmatched.length) log('boundaries', `${unmatched.length} not matched to our ${level}s (check names or load the geography first)`, unmatched.slice(0, 50));
 });
+
+/**
+ * Geopolitical zones (Z-NC, Z-NE, Z-NW, Z-SE, Z-SS, Z-SW): each zone's states merged into one outline, so the
+ * national map can be shown by zone without state borders inside a zone. Merged before simplifying, so shared
+ * borders line up exactly and disappear.
+ */
+async function saveZones(q: Q, states: { code: string; zone: string | null }[], shapes: Map<string, Geometry>, source: string) {
+  const byZone = new Map<string, Geometry[]>();
+  for (const s of states) {
+    const g = shapes.get(s.code);
+    if (!s.zone || !g) continue;
+    if (!byZone.has(s.zone)) byZone.set(s.zone, []);
+    byZone.get(s.zone)!.push(g);
+  }
+  const rows: ShapeRow[] = [];
+  for (const [zone, gs] of byZone) {
+    const parts = gs.map((g) => (g.type === 'Polygon' ? [g.coordinates] : g.coordinates) as MultiPolygon);
+    const merged = union(parts[0], ...parts.slice(1));
+    const shape = simplify({ type: 'MultiPolygon', coordinates: merged } as Geometry, TOLERANCE.zone);
+    const c = center(shape);
+    rows.push({ code: `Z-${zone}`, level: 'zone', geometry: shape, center_lat: c.lat, center_lng: c.lng, source: `${source} (states merged)` });
+  }
+  await saveShapes(q, rows);
+  const missing = states.filter((s) => s.zone && !shapes.has(s.code)).map((s) => s.code);
+  log('boundaries', `saved ${rows.length} zone outlines` + (missing.length ? `; states with no outline left out: ${missing.join(', ')}` : ''));
+}
 
 /**
  * Senatorial districts: one row and outline per district (code = state + its number there, e.g. 20-SD1), then each

@@ -10,7 +10,7 @@ import { AreaMap, type MapArea, type MapData } from '../core/area-map';
 import { Calls } from '../core/calls';
 import { Ui } from '../core/ui';
 
-const LEVEL_NAME: Record<string, string> = { state: 'States', senatorial: 'Senatorial districts', lga: 'LGAs', ward: 'Wards', pu: 'Polling units' };
+const LEVEL_NAME: Record<string, string> = { zone: 'Zones', state: 'States', senatorial: 'Senatorial districts', lga: 'LGAs', ward: 'Wards', pu: 'Polling units' };
 
 /**
  * Situation map: the sub-areas of your area coloured by open issues, the leading party or reporting.
@@ -29,6 +29,13 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', senatorial: 'Senat
       }
     </nav>
  <span class="spacer"></span>
+    @if (data()?.scope === 'NG' && (data()?.level === 'national' || data()?.level === 'zone')) {
+      <!-- The country can be seen by state or by geopolitical zone -->
+      <mat-button-toggle-group class="group" [value]="zones() ? 'zone' : 'state'" (change)="setZones($event.value === 'zone')" hideSingleSelectionIndicator aria-label="Show Nigeria as">
+        <mat-button-toggle value="state">States</mat-button-toggle>
+        <mat-button-toggle value="zone">Zones</mat-button-toggle>
+      </mat-button-toggle-group>
+    }
     @if (data()?.level === 'state' || data()?.level === 'senatorial') {
       <!-- A state can be seen by LGA or by senatorial district (how Senate seats are won) -->
       <mat-button-toggle-group class="group" [value]="group()" (change)="setGroup($event.value)" hideSingleSelectionIndicator aria-label="Show areas as">
@@ -83,7 +90,7 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', senatorial: 'Senat
         <div class="list">
           @for (a of sorted(); track a.code) {
             <div class="row" [class.sel]="a.code === selected()" (click)="clickArea(a)">
-              <div class="name">{{ a.name }} <span class="code">{{ a.code }}</span></div>
+              <div class="name">{{ a.name }} @if (!a.code.startsWith('Z-')) { <span class="code">{{ a.code }}</span> }</div>
               <div class="chips">
                 @if (a.critical) { <span class="chip crit">{{ a.critical }} critical</span> }
                 @if (a.open) { <span class="chip warn">{{ a.open }} open</span> }
@@ -157,6 +164,8 @@ export class MapPage implements AfterViewInit, OnDestroy {
   private parent: string | null = null;
   /** Show a state's areas as LGAs or senatorial districts (kept while drilling down, so the path shows the district) */
   group = signal<'lga' | 'senatorial'>((localStorage.getItem('rumfa.map.group') as 'lga' | 'senatorial') ?? 'lga');
+  /** Show the country by geopolitical zone instead of by state (national staff; kept while drilling down) */
+  zones = signal(localStorage.getItem('rumfa.map.zones') === '1');
 
   childName = computed(() => LEVEL_NAME[this.data()?.childLevel ?? 'state']);
   approx = computed(() => (this.data()?.children ?? []).filter((c) => c.approx).length);
@@ -207,7 +216,8 @@ export class MapPage implements AfterViewInit, OnDestroy {
 
   async load() {
     try {
-      const d = await this.api.get<MapData>('/map', { parent: this.parent ?? undefined, group: this.group() === 'senatorial' ? 'senatorial' : undefined });
+      const group = [this.zones() && 'zone', this.group() === 'senatorial' && 'senatorial'].filter(Boolean).join(',');
+      const d = await this.api.get<MapData>('/map', { parent: this.parent ?? undefined, group: group || undefined });
       this.data.set(d);
       this.parent = d.parent;
       this.draw();
@@ -226,6 +236,15 @@ export class MapPage implements AfterViewInit, OnDestroy {
     try { localStorage.setItem('rumfa.map.group', g); } catch { /* private mode */ }
     // From a district, "LGAs" goes back to the whole state by LGA
     if (g === 'lga' && this.parent?.includes('SD')) this.parent = this.parent.slice(0, 2);
+    this.selected.set(null);
+    void this.load();
+  }
+
+  setZones(on: boolean) {
+    this.zones.set(on);
+    try { localStorage.setItem('rumfa.map.zones', on ? '1' : '0'); } catch { /* private mode */ }
+    // From a zone, "States" goes back to the whole country by state
+    if (!on && this.parent?.startsWith('Z-')) this.parent = 'NG';
     this.selected.set(null);
     void this.load();
   }

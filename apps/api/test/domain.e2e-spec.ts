@@ -318,6 +318,29 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.get(api('/map')).set(as(WARD)).query({ parent: '19-SD2' }).expect(403);
   });
 
+  it('map by geopolitical zone: the country by zone, a zone by its states, zone kept in the path (national staff only)', async () => {
+    const [u] = await ds.query(`select count(*)::int as n from public.polling_units where code like '19-%'`);
+    const ng = (await http.get(api('/map')).set(as(ADMIN)).query({ group: 'zone' }).expect(200)).body;
+    expect(ng).toMatchObject({ parent: 'NG', childLevel: 'zone', group: 'zone' });
+    const nw = ng.children.find((c: any) => c.code === 'Z-NW');
+    expect(nw).toMatchObject({ name: 'North West', coordinator: null });
+    expect(nw.units).toBeGreaterThanOrEqual(u.n);
+
+    const z = (await http.get(api('/map')).set(as(ADMIN)).query({ parent: 'Z-NW', group: 'zone' }).expect(200)).body;
+    expect(z).toMatchObject({ parent: 'Z-NW', level: 'zone', childLevel: 'state' });
+    expect(z.children.map((c: any) => c.code)).toContain('19');
+    expect(z.children.every((c: any) => ['17', '18', '19', '20', '21', '33', '36'].includes(c.code))).toBe(true);
+    expect(z.breadcrumb.map((b: any) => b.name)).toEqual(['Nigeria', 'North West']);
+
+    const lga = (await http.get(api('/map')).set(as(ADMIN)).query({ parent: '19-28', group: 'zone,senatorial' }).expect(200)).body;
+    expect(lga.breadcrumb.map((b: any) => b.code).slice(0, 3)).toEqual(['NG', 'Z-NW', '19']);
+    // Not for people with a smaller area: no zones, and the path never shows one
+    await http.get(api('/map')).set(as(SUP)).query({ parent: 'Z-NW' }).expect(403);
+    const sup = (await http.get(api('/map')).set(as(SUP)).query({ group: 'zone' }).expect(200)).body;
+    expect(sup).toMatchObject({ parent: '19', childLevel: 'lga' });
+    expect(sup.breadcrumb.map((b: any) => b.code)).toEqual(['19']);
+  });
+
   it('map: wards and units with no outline or location get rough places inside their parent', async () => {
     const [w] = await ds.query(`select code from public.wards where lga_code = '19-29' order by code limit 1`);
     const saved = await ds.query(`select * from public.area_shapes where code = $1`, [w.code]);

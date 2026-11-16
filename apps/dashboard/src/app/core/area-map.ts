@@ -16,7 +16,7 @@ export interface MapArea {
   approx?: boolean; radius_m?: number | null;
 }
 export interface MapData {
-  scope: string; parent: string; level: string; childLevel: 'state' | 'senatorial' | 'lga' | 'ward' | 'pu'; group?: 'senatorial' | null; election: string | null;
+  scope: string; parent: string; level: string; childLevel: 'zone' | 'state' | 'senatorial' | 'lga' | 'ward' | 'pu'; group?: 'zone' | 'senatorial' | null; election: string | null;
   parties: string[]; partyColours: Record<string, string>; breadcrumb: { code: string; name: string }[];
   shape: any | null; center: { lat: number; lng: number } | null;
   /** The area itself has no outline: its rough place (as its children are placed around it) */

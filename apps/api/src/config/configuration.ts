@@ -85,6 +85,9 @@ export default function configuration() {
       supabaseUrl: (process.env.SUPABASE_URL ?? '').replace(/\/+$/, ''),
       serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
       localDir: process.env.STORAGE_DIR ?? '.storage',
+      /** Buckets kept on local disk (under localDir) even when the driver is supabase, e.g. "irev" while the
+       *  connection is too weak to upload large IReV sheets. Comma-separated. */
+      localBuckets: (process.env.STORAGE_LOCAL_BUCKETS ?? '').split(',').map((b) => b.trim()).filter(Boolean),
       uploadTtlSeconds: 600,
       viewTtlSeconds: 300,
       maxUploadBytes: int(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),

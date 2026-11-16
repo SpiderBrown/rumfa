@@ -26,6 +26,11 @@ export class StorageService {
     this.publicUrl = config.get('publicUrl')!;
   }
 
+  /** Files of this bucket live on local disk (the local driver, or a bucket listed in STORAGE_LOCAL_BUCKETS). */
+  private local(bucket: string): boolean {
+    return this.cfg.driver === 'local' || this.cfg.localBuckets.includes(bucket);
+  }
+
   private check(bucket: string, path: string) {
     if (!BUCKETS.includes(bucket as Bucket)) throw new BadRequestException('Unknown bucket');
     if (!/^[A-Za-z0-9/_.-]+$/.test(path) || path.includes('..')) throw new BadRequestException('Bad file path');
@@ -33,7 +38,7 @@ export class StorageService {
 
   async uploadUrl(bucket: Bucket, path: string): Promise<{ url: string; method: 'PUT'; headers: Record<string, string> }> {
     this.check(bucket, path);
-    if (this.cfg.driver === 'local') {
+    if (this.local(bucket)) {
       return { url: this.localUrl('put', bucket, path, this.cfg.uploadTtlSeconds), method: 'PUT', headers: {} };
     }
     const j = await this.supabase(`/storage/v1/object/upload/sign/${bucket}/${path}`, {});
@@ -42,7 +47,7 @@ export class StorageService {
 
   async viewUrl(bucket: Bucket, path: string, ttl = this.cfg.viewTtlSeconds): Promise<string> {
     this.check(bucket, path);
-    if (this.cfg.driver === 'local') return this.localUrl('get', bucket, path, ttl);
+    if (this.local(bucket)) return this.localUrl('get', bucket, path, ttl);
     const j = await this.supabase(`/storage/v1/object/sign/${bucket}/${path}`, { expiresIn: ttl });
     return `${this.cfg.supabaseUrl}/storage/v1${j.signedURL ?? j.signedUrl}`;
   }
@@ -50,7 +55,7 @@ export class StorageService {
   /** Server-side download (worker: OCR of stored sheets and photos). */
   async get(bucket: Bucket, path: string): Promise<{ bytes: Buffer; contentType: string }> {
     this.check(bucket, path);
-    if (this.cfg.driver === 'local') {
+    if (this.local(bucket)) {
       const bytes = await this.readLocal(bucket, path);
       return { bytes, contentType: path.endsWith('.pdf') ? 'application/pdf' : path.endsWith('.png') ? 'image/png' : 'image/jpeg' };
     }
@@ -63,7 +68,7 @@ export class StorageService {
   /** Server-side upload (worker, IReV sheets, imports). */
   async put(bucket: Bucket, path: string, body: Buffer, contentType: string): Promise<void> {
     this.check(bucket, path);
-    if (this.cfg.driver === 'local') {
+    if (this.local(bucket)) {
       const file = this.localFile(bucket, path);
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, body);
@@ -100,7 +105,7 @@ export class StorageService {
   }
   verifyLocal(op: string, bucket: string, path: string, exp: string, sig: string) {
     this.check(bucket, path);
-    if (this.cfg.driver !== 'local' || Number(exp) < Date.now() / 1000 || !safeEqual(sig ?? '', this.sign(op, bucket, path, Number(exp)))) {
+    if (!this.local(bucket) || Number(exp) < Date.now() / 1000 || !safeEqual(sig ?? '', this.sign(op, bucket, path, Number(exp)))) {
       throw new NotFoundException();
     }
   }

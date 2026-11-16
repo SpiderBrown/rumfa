@@ -57,6 +57,14 @@ describe('API endpoints and webhooks (e2e)', () => {
 
     const d = await http.get(api(`/cases/${caseId}`)).set(as(SUP)).expect(200);
     expect(d.body.incidents[0].volunteer.id).toBe(AGENT3);
+    // Shown by problem and place name (the stored title keeps the code)
+    const [pl] = await ds.query(`select p.name as pu, w.name as ward, l.name as lga, s.name as state from public.polling_units p
+      join public.wards w on w.code = p.ward_code join public.lgas l on l.code = w.lga_code join public.states s on s.code = l.state_code
+      where p.code = '19-28-02-003'`);
+    expect(d.body.case).toMatchObject({ what: 'BVAS not working',
+      where: { name: pl.pu, parents: [pl.ward, `${pl.lga} LGA`, pl.state], code: '19-28-02-003', level: 'pu' } });
+    const listed = (await http.get(api('/cases')).set(as(SUP)).expect(200)).body.find((c: any) => c.id === caseId);
+    expect(listed).toMatchObject({ what: 'BVAS not working', where: { code: '19-28-02-003' } });
     expect(d.body.people.some((p: any) => p.id === WARD)).toBe(true);
     const assignee = d.body.case.assigned_to;
     expect([OP_HA, OP_EN]).toContain(assignee);
@@ -113,6 +121,10 @@ describe('API endpoints and webhooks (e2e)', () => {
     const v = new URL(view.body.url);
     const file = await http.get(v.pathname + v.search).buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', (d: Buffer) => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); }).expect(200);
     expect(Buffer.from(file.body).toString()).toBe('fake-jpeg');
+    // Shown in the browser and loadable from the dashboard's origin (PDF sheets are drawn there with pdf.js)
+    expect(file.headers['content-type']).toMatch(/^image\/jpeg/);
+    expect(file.headers['content-disposition']).toBe('inline');
+    expect(file.headers['cross-origin-resource-policy']).toBe('cross-origin');
     await http.post(api('/media/view-url')).set(as('adminB')).send({ kind: 'ec8a', id: res.body.submission_id }).expect(404);
   });
 
@@ -176,7 +188,23 @@ describe('API endpoints and webhooks (e2e)', () => {
     const ch = d.body.channelId;
     expect(ch).toBeTruthy();
     await http.post(api(`/channels/${ch}/messages`)).set(as(SUP)).send({ body: 'Is the BVAS working now?', clientId: uuid() }).expect(201);
+
+    // The list names conversations by place, problem or person (not codes), with the last message and unread count
+    const before = (await http.get(api('/channels')).set(as(AGENT3)).expect(200)).body.find((c: any) => c.id === ch);
+    expect(before).toMatchObject({ label: { caseStatus: 'closed', code: expect.stringMatching(/^19-28-02-/) },
+      last: { body: 'Is the BVAS working now?', sender: 'Supervisor Kano', mine: false }, unread: 1 });
+    expect(before.label.category).not.toMatch(/\d{2}-\d{2}/);
+    const teams = (await http.get(api('/channels/area')).set(as(AGENT3)).expect(200)).body;
+    const ward = teams.find((c: any) => c.kind === 'ward');
+    const [nm] = await ds.query(`select w.name as ward, l.name as lga, s.name as state from public.wards w join public.lgas l on l.code = w.lga_code
+                                join public.states s on s.code = l.state_code where w.code = $1`, [ward.area_code]);
+    expect(ward.label).toEqual({ place: nm.ward, parents: [`${nm.lga} LGA`, nm.state], code: ward.area_code });
+    expect(teams.find((c: any) => c.kind === 'state').label).toMatchObject({ place: nm.state, parents: [] });
+
     const seen = await http.get(api(`/channels/${ch}`)).set(as(AGENT3)).expect(200);
+    expect(seen.body.channel.label.caseStatus).toBe('closed'); // the case was closed in the test above
+    // Opening it marks it read
+    expect((await http.get(api('/channels')).set(as(AGENT3)).expect(200)).body.find((c: any) => c.id === ch).unread).toBe(0);
     expect(seen.body.messages.some((m: any) => m.body === 'Is the BVAS working now?' && m.sender_name === 'Supervisor Kano')).toBe(true);
     await http.get(api(`/channels/${ch}`)).set(as('adminB')).expect(404);
 
@@ -322,6 +350,73 @@ describe('API endpoints and webhooks (e2e)', () => {
     const [qt] = await ds.query(`select votes from public.quick_tallies where pu_code = '19-28-02-003' and tenant_id = $1 order by at desc limit 1`, [T_A]);
     expect(qt.votes).toEqual({ APC: 6, PDP: 2, LP: 1 });
     expect((await http.get(api('/live-counts/summary')).set(as(SUP)).expect(200)).body).toMatchObject({ done: 1, counting: 0 });
+  });
+
+  it('check-in: only on election day (or practice), first one is the arrival time, own unit only', async () => {
+    const pu = '19-28-02-003';
+    // The live election is in January 2027: too early, so refused with the opening time
+    const early = await http.post(api('/checkins')).set(as(AGENT3)).send({ pu, clientId: uuid() }).expect(400);
+    expect(early.body.message).toMatch(/opens at 6:00.*16 January/);
+    expect((await http.get(api('/checkins/mine')).set(as(AGENT3)).expect(200)).body)
+      .toMatchObject({ first: null, count: 0, window: { open: false, anyDay: false, electionDate: '2027-01-16', opensAt: '2027-01-16T05:00:00.000Z' } });
+
+    // Practice mode (admins only) allows any day; the phone's tap time counts when it arrives late
+    await http.patch(api('/settings/checkin')).set(as(SUP)).send({ anyDay: true }).expect(403);
+    await http.patch(api('/settings/checkin')).set(as(ADMIN)).send({ anyDay: true, opens: '25:00' }).expect(400);
+    expect((await http.patch(api('/settings/checkin')).set(as(ADMIN)).send({ anyDay: true }).expect(200)).body).toEqual({ opens: '06:00', anyDay: true });
+    const tapped = new Date(Date.now() - 3600_000).toISOString();
+    await http.post(api('/checkins')).set(as(AGENT3)).send({ pu, at: tapped, clientId: uuid() }).expect(204);
+    await http.post(api('/checkins')).set(as(AGENT3)).send({ pu, at: '2030-01-01T00:00:00Z', clientId: uuid() }).expect(204); // future: server time
+    await http.post(api('/checkins')).set(as(AGENT3)).send({ pu: '19-28-02-004', clientId: uuid() }).expect(400);
+    const mine = (await http.get(api('/checkins/mine')).set(as(AGENT3)).expect(200)).body;
+    expect(mine).toMatchObject({ first: tapped, count: 2, window: { open: true, anyDay: true } });
+    expect(Date.parse(mine.last)).toBeLessThanOrEqual(Date.now());
+
+    // Checked against the ward outline; outside is accepted with a note and shown to the room
+    const [a4] = await ds.query(`select area_code from public.volunteers where id = $1`, [AGENT4]);
+    expect((await http.get(api('/checkins/mine')).set(as(AGENT4)).expect(200)).body.fence).toMatchObject({ level: 'ward', code: a4.area_code.slice(0, 8) });
+    await http.post(api('/checkins')).set(as(AGENT4)).send({ pu: a4.area_code, lat: 0, lng: 0, note: 'Unit moved to the school', clientId: uuid() }).expect(204);
+    expect((await http.get(api('/checkins/mine')).set(as(AGENT4)).expect(200)).body).toMatchObject({ count: 1, arrival: null, lastInside: false });
+    const outside = (await http.get(api('/checkins/summary')).set(as(SUP)).expect(200)).body;
+    expect(outside.people.find((p: any) => p.id === AGENT4)).toMatchObject({ outside: true, note: 'Unit moved to the school', against: 'ward' });
+    expect(outside.people.find((p: any) => p.id === AGENT4).distance).toBeGreaterThan(1000_000);
+    // Checking in again from inside the ward corrects it; both are kept
+    await http.post(api('/checkins')).set(as(AGENT4)).send({ pu: a4.area_code, lat: 12.1, lng: 8.3, clientId: uuid() }).expect(204);
+    expect((await http.get(api('/checkins/mine')).set(as(AGENT4)).expect(200)).body).toMatchObject({ count: 2, lastInside: true });
+    const sum = (await http.get(api('/checkins/summary')).set(as(SUP)).expect(200)).body;
+    expect(sum).toMatchObject({ area: '19', childLevel: 'lga', onTimeBy: '07:30', window: { open: true } });
+    expect(sum.checkedIn).toBe(sum.onTime + sum.late);
+    expect(sum.agents).toBe(sum.checkedIn + sum.notYet);
+    const p3 = sum.people.find((p: any) => p.id === AGENT3);
+    expect(p3).toMatchObject({ pu, count: 2, first: tapped });
+    expect(sum.people.find((p: any) => p.id === AGENT4)).toMatchObject({ count: 2, outside: false, unverified: false });
+    expect(p3).toMatchObject({ unverified: true }); // checked in without a location
+    expect(sum.outside).toBe(0);
+    const lga = sum.children.find((c: any) => c.code === '19-28');
+    expect(lga.checkedIn).toBeGreaterThanOrEqual(1);
+    // Ward coordinator: own ward only; agents: none; another organisation: none of these people
+    const ward = (await http.get(api('/checkins/summary')).set(as(WARD)).expect(200)).body;
+    expect(ward.people.every((p: any) => p.pu.startsWith(ward.area))).toBe(true);
+    await http.get(api('/checkins/summary')).set(as(WARD)).query({ area: '19' }).expect(403);
+    await http.get(api('/checkins/summary')).set(as(AGENT3)).expect(403);
+    const b = (await http.get(api('/checkins/summary')).set(as('adminB')).query({ area: '19' }).expect(200)).body;
+    expect(b.people.some((p: any) => p.id === AGENT3)).toBe(false);
+    await http.patch(api('/settings/checkin')).set(as(ADMIN)).send({ anyDay: false }).expect(200);
+  });
+
+  it('checklist answers come back after a reinstall; own party set by admins', async () => {
+    await http.put(api('/checklist')).set(as(AGENT3)).send({ pu: '19-28-02-003', item: 'bvas_working', answer: { value: 'no' }, clientId: uuid() }).expect(204);
+    expect((await http.get(api('/checklist/mine')).set(as(AGENT3)).expect(200)).body).toMatchObject({ bvas_working: 'no' });
+    expect((await http.get(api('/checklist/mine')).set(as(AGENT4)).expect(200)).body.bvas_working).toBeUndefined();
+
+    await http.patch(api('/settings/party')).set(as(ADMIN)).send({ party: 'apc' }).expect(400);
+    await http.patch(api('/settings/party')).set(as(ADMIN)).send({ party: 'PDP' }).expect(200);
+    expect((await http.get(api('/me/context')).set(as(AGENT3)).expect(200)).body.ownParty).toBe('PDP');
+    expect((await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body).toMatchObject({ party: 'PDP', checkin: { opens: '06:00' } });
+    expect((await http.get(api('/me/context')).set(as('adminB')).expect(200)).body.ownParty).toBeNull();
+    await http.patch(api('/settings/party')).set(as(ADMIN)).send({ party: 'XYZ' }).expect(200); // not on the ballot: ignored
+    expect((await http.get(api('/me/context')).set(as(AGENT3)).expect(200)).body.ownParty).toBeNull();
+    await http.patch(api('/settings/party')).set(as(ADMIN)).send({ party: null }).expect(200);
   });
 
   it('two admins are needed for a top-up batch', async () => {

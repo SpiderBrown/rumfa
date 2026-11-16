@@ -100,7 +100,7 @@ export class ResultsController {
 
   @Patch('irev/jobs/:id') @Roles('analyst', 'supervisor', 'admin')
   async jobStatus(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: JobStatusDto) {
-    const [row] = await this.db.asUser(u, (q) => q(`update public.irev_fetch_jobs set status = $2 where id = $1 and tenant_id = $3 returning *`, [id, d.status, u.tid]));
+    const [row] = await this.db.asUser(u, (q) => q(`update public.irev_fetch_jobs set status = $2, error = case when $2 = 'queued' then null else error end where id = $1 and tenant_id = $3 returning *`, [id, d.status, u.tid]));
     if (!row) throw new BadRequestException('Job not found');
     return row;
   }

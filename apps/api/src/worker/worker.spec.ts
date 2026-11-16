@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseCsv } from '../scripts/csv';
-import { documentUrls, puCodeFromIrev } from './irev/client';
+import { NetworkError, deadLinks, describeFetchError, documentUrls, download, puCodeFromIrev } from './irev/client';
 import { DUPLICATE_MAX_DISTANCE, hamming, prepareSheet } from './irev/image';
 import { render } from './notify/outbox';
 import { parseEc8a, wordsToNumber } from './ocr/ec8a-parser';
@@ -95,4 +95,36 @@ test('Lagos time and templates', () => {
   assert.match(render('callback_request_sms', { name: 'Musa', phone: '+2348031234567', reason: 'unit' }).body, /Musa .*problem at the unit/);
   assert.match(render('raw', { text: 'hello' }, 'ALAWA').body, /^ALAWA: hello$/);
   assert.match(render('raw', { text: 'hello' }).body, /^Rumfa: hello$/);
+});
+
+test('IReV downloads: a lost connection is told apart from a bad sheet', async () => {
+  const offline = describeFetchError(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }), 'irev-results.lon1.digitaloceanspaces.com');
+  expect(offline).toBeInstanceOf(NetworkError);
+  expect(offline.message).toBe('No connection to irev-results.lon1.digitaloceanspaces.com (ENOTFOUND)');
+  expect(describeFetchError(Object.assign(new Error('x'), { name: 'TimeoutError' }))).toBeInstanceOf(NetworkError);
+
+  const real = global.fetch;
+  try {
+    global.fetch = (async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'EAI_AGAIN' } }); }) as any;
+    await expect(download('https://cdn.example/sheet.pdf', 1)).rejects.toThrow(NetworkError);
+    global.fetch = (async () => new Response('gone', { status: 404 })) as any;
+    const notFound = await download('https://cdn.example/sheet.pdf', 1).catch((e) => e);
+    expect(notFound).not.toBeInstanceOf(NetworkError);
+    expect(notFound.message).toBe('Download 404 from cdn.example');
+  } finally { global.fetch = real; }
+});
+
+test('IReV: the dead backup host is never tried', () => {
+  const urls = documentUrls({
+    document_url: 'https://irev-results.lon1.digitaloceanspaces.com/1292/x.pdf',
+    backup_url: 'https://irevx.ams3.cdn.digitaloceanspaces.com/elections_prod/x.pdf',
+  });
+  expect(urls).toEqual(['https://irev-results.lon1.digitaloceanspaces.com/1292/x.pdf']);
+});
+
+test('IReV: a sheet listed only on the dead thumbnail server has nothing to download', () => {
+  const thumbOnly = { url: 'https://inc-s3-cache.incportals.com/cached/results/5202/result_49966_1677668139_thumb.jpg' };
+  expect(documentUrls(thumbOnly)).toEqual([]);
+  expect(deadLinks(thumbOnly)).toEqual([thumbOnly.url]);
+  expect(documentUrls({ url: 'https://inc-s3-cache.incportals.com/' })).toEqual([]);
 });

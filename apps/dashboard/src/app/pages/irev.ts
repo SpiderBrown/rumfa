@@ -15,7 +15,8 @@ import { AgoPipe, Ui, label } from '../core/ui';
 interface AreaRow { area_code: string; name: string; units: number; not_checked: number; not_on_irev: number; on_irev: number;
   downloaded: number; replaced: number; failed: number; ocr_read: number; ocr_review: number; ocr_confirmed: number }
 interface Job { id: string; job_type: string; area_level: string; area_code: string; status: string; counts: Record<string, number>;
-  auto_recheck: boolean; interval_min: number; created_at: string; next_run_at: string | null; error: string | null }
+  auto_recheck: boolean; interval_min: number; created_at: string; started_at: string | null; finished_at: string | null;
+  next_run_at: string | null; error: string | null }
 
 /** IReV data manager (design section 11.5): fetch and track result sheets by state, LGA and ward. */
 @Component({
@@ -87,8 +88,12 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
     <div class="job">
       <div><b>{{ label(j.job_type) }}</b> · {{ j.area_level }} {{ j.area_code }} · {{ label(j.status) }}
         @if (j.auto_recheck) { · every {{ j.interval_min }} min, next {{ j.next_run_at | ago }} } · started {{ j.created_at | ago }}</div>
-      <div class="small">{{ countsText(j.counts) }} @if (j.error) { <span class="bad">{{ j.error }}</span> }</div>
+      <div class="small">{{ progressText(j) }}
+        @if (j.counts['failed']) { · <span class="bad">{{ j.counts['failed'] }} could not be downloaded</span> }</div>
+      @if (j.error) { <div class="small" [class.bad]="j.status !== 'running'" [class.warn]="j.status === 'running'">{{ j.error }}</div> }
       <div class="acts">
+        @if (['done','failed','cancelled'].includes(j.status) && j.counts['failed']) {
+          <button mat-button (click)="fetch(j.area_code, $any(j.job_type))" matTooltip="Runs the job again; sheets already downloaded are skipped">Retry failed</button> }
         @if (j.status === 'running') { <button mat-button (click)="setJob(j, 'paused')">Pause</button> }
         @if (j.status === 'paused') { <button mat-button (click)="setJob(j, 'queued')">Resume</button> }
         @if (['running','paused','queued'].includes(j.status)) { <button mat-button (click)="setJob(j, 'cancelled')">Cancel</button> }
@@ -162,7 +167,22 @@ export class IrevPage implements OnDestroy {
     await this.loadJobs();
   }
 
-  countsText(c: Record<string, number>) { return Object.entries(c ?? {}).map(([k, v]) => `${label(k)} ${v}`).join(' · ') || 'Starting…'; }
+  countsText(c: Record<string, number>) { return Object.entries(c ?? {}).map(([k, v]) => `${label(k)} ${v}`).join(' · '); }
+
+  /** What the job is doing, in words: never "Starting…" for a job that has finished or is waiting for a worker. */
+  progressText(j: Job): string {
+    const counts = this.countsText(j.counts);
+    switch (j.status) {
+      case 'queued': return Date.now() - Date.parse(j.created_at) > 60_000
+        ? 'Waiting for the worker. If this stays, check that the worker is running.' : 'Waiting for the worker…';
+      case 'running': return counts ? `Working: ${counts}` : 'Started, checking the first ward…';
+      case 'paused': return counts ? `Paused after ${counts}` : 'Paused';
+      case 'done': return counts || 'Finished: nothing to fetch in this area';
+      case 'failed': return counts ? `Stopped after ${counts}` : 'Stopped';
+      case 'cancelled': return counts ? `Cancelled after ${counts}` : 'Cancelled';
+      default: return counts;
+    }
+  }
 
   async openUnit(r: AreaRow) {
     const e = this.election();

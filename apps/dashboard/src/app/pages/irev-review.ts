@@ -7,16 +7,17 @@ import { MatInputModule } from '@angular/material/input';
 import { checkResult } from '@rumfa/shared';
 import { Api } from '../core/api';
 import { Ui } from '../core/ui';
+import { SheetViewer } from '../core/sheet-viewer';
 
-/** Review queue: sheets whose figures OCR could not read confidently. Staff type them while viewing the image. */
+/** Review queue: sheets whose figures OCR could not read confidently. Staff type them while viewing the sheet (photo or PDF). */
 @Component({
   selector: 'app-irev-review',
-  imports: [FormsModule, MatButtonModule, MatCardModule, MatFormFieldModule, MatInputModule],
+  imports: [FormsModule, SheetViewer, MatButtonModule, MatCardModule, MatFormFieldModule, MatInputModule],
   template: `
   <h1>Sheet review <span class="n">{{ queue().length }} waiting</span></h1>
   @if (cur(); as s) {
     <div class="grid">
-      <div class="img">@if (imgUrl()) { <img [src]="imgUrl()" alt="Result sheet" /> } @else { Loading sheet… }</div>
+      <app-sheet-viewer class="img" [url]="imgUrl()" />
       <mat-card appearance="outlined" class="form">
         <mat-card-header><mat-card-title>{{ s.pu_code }}</mat-card-title><mat-card-subtitle>Sheet version {{ s.sheet_version }}
           @if (s.sheet_pu_code && s.sheet_pu_code !== s.pu_code) { · <b class="bad">sheet shows {{ s.sheet_pu_code }}</b> }</mat-card-subtitle></mat-card-header>
@@ -41,7 +42,7 @@ import { Ui } from '../core/ui';
   } @else { <p>Nothing to review.</p> }`,
   styles: `h1 { font: var(--mat-sys-headline-small); } .n { font: var(--mat-sys-label-large); color: var(--mat-sys-on-surface-variant); }
     .grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(320px, 1fr); gap: 20px; }
-    .img img { width: 100%; border: 1px solid var(--mat-sys-outline-variant); } .parties { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
+    .img { position: sticky; top: 8px; align-self: start; } .parties { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
     .acts { display: flex; gap: 8px; margin-top: 12px; } .bad { color: #b3261e; } input.low { background: #fff4e5; }`,
 })
 export class IrevReviewPage {

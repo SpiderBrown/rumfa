@@ -4,7 +4,7 @@
 
 import { workerConfig as config } from '../config';
 import { json, log, one, q, storage, upsert } from '../context';
-import { documentUrls, download, puCodeFromIrev, unitsOfWard, type IrevDocument, type IrevUnit } from './client';
+import { NetworkError, deadLinks, describeFetchError, documentUrls, download, online, puCodeFromIrev, unitsOfWard, type IrevDocument, type IrevUnit } from './client';
 import { DUPLICATE_MAX_DISTANCE, hamming, prepareSheet } from './image';
 import { ocrIrevSheet } from '../ocr/pipeline';
 
@@ -31,7 +31,40 @@ async function jobStillRunning(id: string): Promise<boolean> {
 }
 
 export async function failJob(id: string, error: string) {
-  await q(`update public.irev_fetch_jobs set status = 'failed', error = $2 where id = $1`, [id, error]);
+  await q(`update public.irev_fetch_jobs set status = 'failed', error = $2, finished_at = now() where id = $1`, [id, error]);
+}
+
+/** Waits between tries while there is no connection: about 10 minutes in all, then the job is paused. */
+export const OUTAGE_WAITS_S = [15, 30, 60, 120, 120, 120, 120];
+const setError = (id: string, error: string | null) => q(`update public.irev_fetch_jobs set error = $2 where id = $1`, [id, error]);
+
+/**
+ * Runs one step, riding out a lost connection: the job shows "Waiting for internet…" and tries again; if the
+ * connection stays down it is paused (never marking units failed for it) so it can be resumed from the dashboard.
+ * Returns undefined when the job was paused or stopped meanwhile.
+ */
+async function despiteOutage<T>(job: Job, step: () => Promise<T>, waits = OUTAGE_WAITS_S): Promise<T | undefined> {
+  let waited = false;
+  for (let i = 0; ; i++) {
+    try {
+      const r = await step();
+      if (waited) await setError(job.id, null);
+      return r;
+    } catch (e) {
+      if (!(e instanceof NetworkError)) throw e;
+      if (i >= waits.length) {
+        await q(`update public.irev_fetch_jobs set status = 'paused', error = $2 where id = $1 and status = 'running'`,
+          [job.id, `Paused: ${e.message}. Press Resume when the connection is back.`]);
+        log('irev', `job ${job.id} paused: ${e.message}`);
+        return undefined;
+      }
+      waited = true;
+      await setError(job.id, `Waiting for internet: ${e.message}. Trying again in ${waits[i]} s`);
+      log('irev', `job ${job.id}: ${e.message}; retrying in ${waits[i]} s`);
+      await new Promise((r) => setTimeout(r, waits[i] * 1000));
+      if (!(await jobStillRunning(job.id))) return undefined;
+    }
+  }
 }
 
 export async function runJob(job: Job): Promise<void> {
@@ -53,17 +86,25 @@ export async function runJob(job: Job): Promise<void> {
   const wards = await q<{ code: string; irev_id: string }>(
     `select code, irev_id from public.wards where code like $1 and irev_id is not null order by code`,
     [job.area_code === 'NG' ? '%' : `${job.area_code}%`]);
+  if (!wards.length) {
+    return failJob(job.id, 'No wards with IReV links in this area yet. Run the geography import for this state first.');
+  }
   for (const w of wards) {
     if (!(await jobStillRunning(job.id))) return; // paused or cancelled from the dashboard
-    let units: IrevUnit[];
+    let units: IrevUnit[] | undefined;
     try {
-      units = await unitsOfWard(election.irev_election_id, w.irev_id);
+      units = await despiteOutage(job, () => unitsOfWard(election.irev_election_id, w.irev_id));
+      if (!units) return;
     } catch (e) {
       bump('ward_failed');
       log('irev', `ward ${w.code} failed: ${(e as Error).message}`);
       continue;
     }
-    for (const u of units) bump(await processUnit(job, u));
+    for (const u of units) {
+      const r = await despiteOutage(job, () => processUnit(job, u));
+      if (r === undefined) { await saveCounts(job.id, counts); return; }
+      bump(r);
+    }
     await saveCounts(job.id, counts);
   }
   await finish(job, counts);
@@ -129,29 +170,50 @@ export async function processUnit(job: Job, u: IrevUnit): Promise<string> {
     replaced_count: u.old_documents?.length && !cur ? u.old_documents.length : (cur?.replaced_count ?? 0) + (replaced ? 1 : 0),
   };
 
-  let lastErr = '';
+  const errors: string[] = [];
+  let offline = urls.length > 0; // stays true while every URL failed for lack of a connection
   for (const url of urls) {
+    let sheet;
     try {
       const { bytes, contentType } = await download(url);
-      const sheet = await prepareSheet(bytes, contentType, config.irev.maxImageWidth);
-      const path = `${job.election_id}/${pu}/v${seenNow.length}.${sheet.ext}`;
-      await storage().put('irev', path, sheet.bytes, sheet.contentType);
-      await record({
-        ...base, status: replaced ? 'replaced' : 'downloaded', storage_path: path, size_bytes: sheet.bytes.length,
-        checksum: sheet.sha256, phash: sheet.phash, content_type: sheet.contentType, ocr_status: 'not_read',
-        attempts: (cur?.attempts ?? 0) + 1, last_error: null,
-      }, { url, replaced });
-      await checkDuplicate(job, pu, sheet.sha256, sheet.phash);
-      if (job.job_type === 'live') {
-        // Live: read figures straight away so the IReV tally and matching stay current
-        try { await ocrIrevSheet(job.election_id, pu); } catch (e) { log('ocr', `${pu}: ${(e as Error).message}`); }
-      }
-      if (replaced) await q(`select public.svc_verify_unit($1, $2)`, [job.election_id, pu]);
-      return replaced ? 'replaced' : 'downloaded';
+      sheet = await prepareSheet(bytes, contentType, config.irev.maxImageWidth);
     } catch (e) {
-      lastErr = (e as Error).message;
+      errors.push((e as Error).message);
+      if (!(e instanceof NetworkError)) offline = false;
+      continue;
     }
+    // Saving is its own step: a dropped connection here is waited out like any other; a refusal is reported as such
+    const path = `${job.election_id}/${pu}/v${seenNow.length}.${sheet.ext}`;
+    try {
+      await storage().put('irev', path, sheet.bytes, sheet.contentType);
+    } catch (e) {
+      const err = describeFetchError(e);
+      if (err instanceof NetworkError) throw new NetworkError(`Saving to storage: ${err.message}`);
+      await record({ ...base, status: 'failed', attempts: (cur?.attempts ?? 0) + 1,
+        last_error: `Downloaded (${(sheet.bytes.length / 1e6).toFixed(1)} MB) but saving to storage failed: ${err.message}` });
+      return 'failed';
+    }
+    await record({
+      ...base, status: replaced ? 'replaced' : 'downloaded', storage_path: path, size_bytes: sheet.bytes.length,
+      checksum: sheet.sha256, phash: sheet.phash, content_type: sheet.contentType,
+      // The same file again (e.g. re-downloaded after the local copy was lost): its figures are already read
+      ocr_status: cur?.checksum === sheet.sha256 && cur?.ocr_status ? cur.ocr_status : 'not_read',
+      attempts: (cur?.attempts ?? 0) + 1, last_error: null,
+    }, { url, replaced });
+    await checkDuplicate(job, pu, sheet.sha256, sheet.phash);
+    if (job.job_type === 'live') {
+      // Live: read figures straight away so the IReV tally and matching stay current
+      try { await ocrIrevSheet(job.election_id, pu); } catch (e) { log('ocr', `${pu}: ${(e as Error).message}`); }
+    }
+    if (replaced) await q(`select public.svc_verify_unit($1, $2)`, [job.election_id, pu]);
+    return replaced ? 'replaced' : 'downloaded';
   }
+  // No connection at all: leave the unit as it was and let the job wait and retry. But if the internet is up,
+  // the sheet's server itself is gone: record that and move on.
+  if (offline && !(await online())) throw new NetworkError(errors.at(-1) ?? 'No connection');
+  const dead = deadLinks(doc);
+  const lastErr = [...new Set(errors)].join('; ')
+    || (dead.length ? `IReV lists this sheet only on servers that no longer exist (${[...new Set(dead.map((u) => new URL(u).host))].join(', ')})` : '');
   await record({ ...base, status: urls.length ? 'failed' : 'on_irev', attempts: (cur?.attempts ?? 0) + 1, last_error: lastErr || 'No usable URL' });
   return urls.length ? 'failed' : 'on_irev';
 }

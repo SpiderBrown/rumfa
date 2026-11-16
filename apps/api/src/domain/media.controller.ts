@@ -33,6 +33,12 @@ class ViewDto {
   @ApiPropertyOptional() @IsOptional() @IsString() pu?: string;
 }
 
+/** File types served from local storage (by extension) */
+const TYPES: Record<string, string> = {
+  pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  mp4: 'video/mp4', webm: 'video/webm', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', mp3: 'audio/mpeg', csv: 'text/csv',
+};
+
 @ApiTags('Files')
 @ApiBearerAuth()
 @Controller()
@@ -79,7 +85,12 @@ export class MediaController {
   async localGet(@Param('bucket') bucket: string, @Param('path') path: string | string[], @Query() qs: any, @Res() res: Response) {
     const p = Array.isArray(path) ? path.join('/') : path;
     this.storage.verifyLocal('get', bucket, p, qs.exp, qs.sig);
-    res.send(await this.storage.readLocal(bucket, p));
+    const body = await this.storage.readLocal(bucket, p);
+    // Shown in the browser (not downloaded), and loadable by the dashboard on another origin: the link is signed and short-lived
+    res.type(TYPES[p.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.send(body);
   }
 
   @Public() @Put('files/:bucket/*path') @HttpCode(200) @ApiExcludeEndpoint()

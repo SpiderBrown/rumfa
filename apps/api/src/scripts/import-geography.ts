@@ -38,9 +38,12 @@ void withDb(async (q) => {
         const units = await unitsOfWard(irevElection, w._id);
         const rows = units.map((u) => ({ code: puCodeFromIrev(u.pu_code), name: titleCase(u.name), irev_id: u._id })).filter((r) => r.code.startsWith(code + '-'));
         if (rows.length !== units.length) log('geo', `ward ${code}: ${units.length - rows.length} units with unexpected codes skipped`);
-        for (const r of rows) {
-          await q(`insert into public.polling_units (code, ward_code, name, irev_id) values ($1, $2, $3, $4)
-                   on conflict (code) do update set name = excluded.name, irev_id = excluded.irev_id`, [r.code, code, r.name, r.irev_id]);
+        // The whole ward in one statement: one round trip instead of one per unit (the database may be far away)
+        if (rows.length) {
+          await q(`insert into public.polling_units (code, ward_code, name, irev_id)
+                   select u.code, $1, u.name, u.irev_id from unnest($2::text[], $3::text[], $4::text[]) as u(code, name, irev_id)
+                   on conflict (code) do update set name = excluded.name, irev_id = excluded.irev_id`,
+            [code, rows.map((r) => r.code), rows.map((r) => r.name), rows.map((r) => r.irev_id)]);
         }
         unitCount += rows.length;
       }

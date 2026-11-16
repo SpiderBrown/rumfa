@@ -296,6 +296,55 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ inapp: false }).expect(200);
   });
 
+  it('map by senatorial district: a state by district, a district by its LGAs, district kept in the path', async () => {
+    await ds.query(`insert into public.senatorial_districts (code, state_code, name) values ('19-SD1', '19', 'Kano Central'), ('19-SD2', '19', 'Kano North')
+                    on conflict do nothing`);
+    await ds.query(`update public.lgas set senatorial_code = case code when '19-28' then '19-SD1' else '19-SD2' end where code in ('19-28', '19-29')`);
+    const [u] = await ds.query(`select count(*)::int as n from public.polling_units where code like '19-28-%'`);
+
+    const st = (await http.get(api('/map')).set(as(SUP)).query({ group: 'senatorial' }).expect(200)).body;
+    expect(st).toMatchObject({ parent: '19', childLevel: 'senatorial', group: 'senatorial' });
+    expect(st.children.map((c: any) => c.code)).toEqual(['19-SD1', '19-SD2']);
+    expect(st.children[0]).toMatchObject({ name: 'Kano Central', units: u.n, coordinator: null });
+
+    const d = (await http.get(api('/map')).set(as(SUP)).query({ parent: '19-SD1' }).expect(200)).body;
+    expect(d).toMatchObject({ parent: '19-SD1', level: 'senatorial', childLevel: 'lga' });
+    expect(d.children.map((c: any) => c.code)).toEqual(['19-28']);
+    expect(d.breadcrumb.map((b: any) => b.name)).toEqual(['Kano', 'Kano Central']);
+
+    const lga = (await http.get(api('/map')).set(as(SUP)).query({ parent: '19-28', group: 'senatorial' }).expect(200)).body;
+    expect(lga.breadcrumb.map((b: any) => b.code)).toEqual(['19', '19-SD1', '19-28']);
+    // Outside the person's area: refused
+    await http.get(api('/map')).set(as(WARD)).query({ parent: '19-SD2' }).expect(403);
+  });
+
+  it('map: wards and units with no outline or location get rough places inside their parent', async () => {
+    const [w] = await ds.query(`select code from public.wards where lga_code = '19-29' order by code limit 1`);
+    const saved = await ds.query(`select * from public.area_shapes where code = $1`, [w.code]);
+    await ds.query(`delete from public.area_shapes where code = $1`, [w.code]);
+    const unitsSaved = await ds.query(`select code, lat, lng from public.polling_units where ward_code = $1`, [w.code]);
+    await ds.query(`update public.polling_units set lat = null, lng = null where ward_code = $1`, [w.code]);
+    try {
+      const lga = (await http.get(api('/map')).set(as(SUP)).query({ parent: '19-29' }).expect(200)).body;
+      const ward = lga.children.find((c: any) => c.code === w.code);
+      expect(ward).toMatchObject({ shape: null, approx: true });
+      expect(typeof ward.lat).toBe('number');
+      expect(ward.radius_m).toBeGreaterThan(0);
+
+      // Opening it: the ward sits at the same rough place, its units around it, so the map can zoom there
+      const units = (await http.get(api('/map')).set(as(SUP)).query({ parent: w.code }).expect(200)).body;
+      expect(units.approxArea).toMatchObject({ lat: ward.lat, lng: ward.lng });
+      expect(units.center).toMatchObject({ lat: ward.lat, lng: ward.lng });
+      expect(units.children.length).toBe(unitsSaved.length);
+      expect(units.children.every((c: any) => typeof c.lat === 'number' && typeof c.lng === 'number')).toBe(true);
+      expect(units.children.some((c: any) => c.approx)).toBe(true);
+    } finally {
+      for (const s of saved) await ds.query(`insert into public.area_shapes (code, level, geometry, center_lat, center_lng, source) values ($1, $2, $3, $4, $5, $6)`,
+        [s.code, s.level, s.geometry, s.center_lat, s.center_lng, s.source]);
+      for (const u of unitsSaved) await ds.query(`update public.polling_units set lat = $2, lng = $3 where code = $1`, [u.code, u.lat, u.lng]);
+    }
+  });
+
   it('map: sub-areas with votes and issues, scoped to the person\'s area and organisation', async () => {
     await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'materials_late', clientId: uuid() }).expect(200);
 

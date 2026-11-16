@@ -10,7 +10,7 @@ import { AreaMap, type MapArea, type MapData } from '../core/area-map';
 import { Calls } from '../core/calls';
 import { Ui } from '../core/ui';
 
-const LEVEL_NAME: Record<string, string> = { state: 'States', lga: 'LGAs', ward: 'Wards', pu: 'Polling units' };
+const LEVEL_NAME: Record<string, string> = { state: 'States', senatorial: 'Senatorial districts', lga: 'LGAs', ward: 'Wards', pu: 'Polling units' };
 
 /**
  * Situation map: the sub-areas of your area coloured by open issues, the leading party or reporting.
@@ -28,7 +28,14 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', lga: 'LGAs', ward:
         @if (last) { <b>{{ b.name }}</b> } @else { <a (click)="open(b.code)">{{ b.name }}</a><mat-icon>chevron_right</mat-icon> }
       }
     </nav>
-    <span class="spacer"></span>
+ <span class="spacer"></span>
+    @if (data()?.level === 'state' || data()?.level === 'senatorial') {
+      <!-- A state can be seen by LGA or by senatorial district (how Senate seats are won) -->
+      <mat-button-toggle-group class="group" [value]="group()" (change)="setGroup($event.value)" hideSingleSelectionIndicator aria-label="Show areas as">
+        <mat-button-toggle value="lga">LGAs</mat-button-toggle>
+        <mat-button-toggle value="senatorial">Senatorial districts</mat-button-toggle>
+      </mat-button-toggle-group>
+    }
     <mat-button-toggle-group [value]="layer()" (change)="setLayer($event.value)" hideSingleSelectionIndicator>
       <mat-button-toggle value="issues"><mat-icon>warning</mat-icon> Issues</mat-button-toggle>
       <mat-button-toggle value="votes"><mat-icon>how_to_vote</mat-icon> Votes</mat-button-toggle>
@@ -49,7 +56,9 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', lga: 'LGAs', ward:
           @case ('reporting') { @for (b of reportingBands; track b.label) { <span><i [style.background]="b.colour"></i>{{ b.label }}</span> } }
         }
       </div>
-      @if (noShape() > 0) { <div class="noshape">{{ noShape() }} {{ childName() }} have no outline yet: load boundaries with <code>npm run import:boundaries</code>.</div> }
+      @if (approx() > 0) {
+        <div class="noshape">{{ approxNote() }}</div>
+      } @else if (noShape() > 0) { <div class="noshape">{{ noShape() }} {{ childName().toLowerCase() }} have no outline yet: load boundaries with <code>npm run import:boundaries</code>.</div> }
     </div>
 
     <aside class="panel">
@@ -108,7 +117,7 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', lga: 'LGAs', ward:
       box-shadow: 0 1px 6px rgba(0,0,0,.2); display: flex; flex-direction: column; gap: 4px; font-size: 12px; max-height: 50%; overflow: auto; }
     .legend span { display: flex; align-items: center; gap: 6px; } .legend i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,.2); }
     .legend .note { color: var(--mat-sys-on-surface-variant); }
-    .noshape { position: absolute; right: 12px; bottom: 12px; z-index: 500; background: var(--mat-sys-tertiary-container); padding: 6px 10px; border-radius: 8px; font-size: 12px; max-width: 360px; }
+    .noshape { position: absolute; right: 12px; top: 12px; z-index: 500; background: var(--mat-sys-tertiary-container); padding: 6px 10px; border-radius: 8px; font-size: 12px; max-width: min(360px, calc(100% - 70px)); }
     .panel { height: calc(100vh - 170px); min-height: 420px; overflow: auto; }
     .sum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .sum div { background: var(--mat-sys-surface-container); border-radius: 10px; padding: 8px; text-align: center; }
@@ -119,6 +128,7 @@ const LEVEL_NAME: Record<string, string> = { state: 'States', lga: 'LGAs', ward:
     .track { height: 10px; background: var(--mat-sys-surface-container-high); border-radius: 5px; overflow: hidden; } .fill { display: block; height: 100%; }
     .n { text-align: right; }
     h3 { font: var(--mat-sys-title-small); margin: 16px 0 6px; } .sub { color: var(--mat-sys-on-surface-variant); font-weight: 400; }
+    .group { margin-right: 8px; }
     .row { padding: 8px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
     .row:hover { background: var(--mat-sys-surface-container); } .row.sel { border-color: var(--mat-sys-primary); }
     .name { font-weight: 500; } .code { font-size: 11px; color: var(--mat-sys-outline); margin-left: 4px; }
@@ -145,8 +155,19 @@ export class MapPage implements AfterViewInit, OnDestroy {
   layer = signal<MapLayer>((localStorage.getItem('rumfa.map.layer') as MapLayer) ?? 'issues');
   selected = signal<string | null>(null);
   private parent: string | null = null;
+  /** Show a state's areas as LGAs or senatorial districts (kept while drilling down, so the path shows the district) */
+  group = signal<'lga' | 'senatorial'>((localStorage.getItem('rumfa.map.group') as 'lga' | 'senatorial') ?? 'lga');
 
   childName = computed(() => LEVEL_NAME[this.data()?.childLevel ?? 'state']);
+  approx = computed(() => (this.data()?.children ?? []).filter((c) => c.approx).length);
+  /** Says plainly that dashed circles are rough places, not real ones */
+  approxNote = computed(() => {
+    const n = this.approx(), d = this.data();
+    const pu = d?.childLevel === 'pu';
+    const what = pu ? (n === 1 ? 'polling unit has no location' : 'polling units have no location') : (n === 1 ? 'ward has no outline' : 'wards have no outline');
+    return `${n} ${what} yet, so ${n === 1 ? 'it is' : 'they are'} shown as ${n === 1 ? 'a dashed circle at a rough place' : 'dashed circles at rough places'}, not real ${n === 1 ? 'one' : 'ones'}.`
+      + (d?.approxArea ? ' This ward is placed roughly too.' : '');
+  });
   noShape = computed(() => (this.data()?.children ?? []).filter((c) => !c.shape && (c.lat == null || c.lng == null)).length);
   totals = computed(() => {
     const d = this.data();
@@ -186,7 +207,7 @@ export class MapPage implements AfterViewInit, OnDestroy {
 
   async load() {
     try {
-      const d = await this.api.get<MapData>('/map', { parent: this.parent ?? undefined });
+      const d = await this.api.get<MapData>('/map', { parent: this.parent ?? undefined, group: this.group() === 'senatorial' ? 'senatorial' : undefined });
       this.data.set(d);
       this.parent = d.parent;
       this.draw();
@@ -198,6 +219,15 @@ export class MapPage implements AfterViewInit, OnDestroy {
   clickArea(a: MapArea) {
     if (this.data()?.childLevel === 'pu') { this.selected.set(a.code); this.draw(); return; }
     this.open(a.code);
+  }
+
+  setGroup(g: 'lga' | 'senatorial') {
+    this.group.set(g);
+    try { localStorage.setItem('rumfa.map.group', g); } catch { /* private mode */ }
+    // From a district, "LGAs" goes back to the whole state by LGA
+    if (g === 'lga' && this.parent?.includes('SD')) this.parent = this.parent.slice(0, 2);
+    this.selected.set(null);
+    void this.load();
   }
 
   setLayer(l: MapLayer) {

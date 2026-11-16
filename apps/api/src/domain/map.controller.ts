@@ -5,6 +5,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { elections } from '../common/fn';
 import { ROOM } from './roles';
+import { spreadAround, spreadInside, type Spot } from './approx-places';
 
 /** Open case statuses shown on the map. */
 const OPEN = ['queued', 'assigned', 'in_progress', 'escalated'];
@@ -37,13 +38,19 @@ export class MapController {
 
   @Get()
   @ApiOperation({ summary: 'Sub-areas of an area with votes, reporting and open issues (defaults to your own area)' })
-  async map(@CurrentUser() u: AuthUser, @Query('parent') parentQ?: string, @Query('election') electionQ?: string) {
+  async map(@CurrentUser() u: AuthUser, @Query('parent') parentQ?: string, @Query('election') electionQ?: string,
+            @Query('group') groupQ?: string) {
     const scope = mapScope(u);
     const parent = (parentQ || scope).trim();
-    if (!/^(NG|\d{2}(-\d{2}){0,2})$/.test(parent)) throw new BadRequestException('Unknown area');
-    if (!inScope(scope, parent)) throw new ForbiddenException('That area is outside yours');
-    const len = childLength(parent)!;
-    const prefix = parent === 'NG' ? '%' : `${parent}-%`;
+    if (!/^(NG|\d{2}(-\d{2}){0,2}|\d{2}-SD\d)$/.test(parent)) throw new BadRequestException('Unknown area');
+    const district = /^\d{2}-SD\d$/.test(parent);
+    if (!inScope(scope, district ? parent.slice(0, 2) : parent)) throw new ForbiddenException('That area is outside yours');
+    // Senatorial districts: a state can be shown by district (group=senatorial); a district shows its LGAs
+    const bySenatorial = groupQ === 'senatorial' && parent.length === 2 && parent !== 'NG';
+    const len = district ? 5 : childLength(parent)!;
+    const prefix = parent === 'NG' ? '%' : district ? `${parent.slice(0, 2)}-%` : `${parent}-%`;
+    /** The sub-area a unit, case or person belongs to: the first part of its code, or (by district) its LGA's district */
+    const key = (col: string) => bySenatorial ? `(select l.senatorial_code from public.lgas l where l.code = left(${col}, 5))` : `left(${col}, $5)`;
 
     const el = await this.db.asUser(u, (q) => elections(q, u.tid));
     const election = electionQ || el.live;
@@ -52,7 +59,9 @@ export class MapController {
     const kidsSql = {
       2: `select s.code, s.name from public.states s
            where exists (select 1 from public.tenant_coverage c where c.tenant_id = $1 and (c.level = 'national' or c.area_code = s.code or c.area_code like s.code || '-%'))`,
-      5: `select code, name from public.lgas where state_code = $4`,
+      5: district ? `select code, name from public.lgas where senatorial_code = $4`
+        : bySenatorial ? `select code, name from public.senatorial_districts where state_code = $4`
+        : `select code, name from public.lgas where state_code = $4`,
       8: `select code, name from public.wards where lga_code = $4`,
       12: `select code, name from public.polling_units where ward_code = $4`,
     }[len]!;
@@ -60,8 +69,8 @@ export class MapController {
     const rows = await this.db.system(
       `with kids as (${kidsSql}),
        units as (
-         select left(code, $5) as k, count(*)::int as units, coalesce(sum(registered_voters), 0)::int as registered
-           from public.polling_units where code like $3 group by 1),
+         select ${key('pu.code')} as k, count(*)::int as units, coalesce(sum(pu.registered_voters), 0)::int as registered
+           from public.polling_units pu where pu.code like $3 group by 1),
        best as (
          select distinct on (pu) pu, votes, src from (
            select pu_code as pu, votes, 'ec8a' as src, 1 as pr from public.v_latest_results
@@ -79,29 +88,29 @@ export class MapController {
             where tenant_id = $1 and election_id = $2 and pu_code like $3) x
           order by pu, pr),
        reported as (
-         select left(pu, $5) as k, count(*)::int as n,
+         select ${key('pu')} as k, count(*)::int as n,
                 count(*) filter (where src = 'ec8a')::int as ec8a, count(*) filter (where src = 'irev')::int as irev,
                 count(*) filter (where src = 'quick')::int as quick, count(*) filter (where src = 'live')::int as live
            from best group by 1),
        votes as (
          select k, jsonb_object_agg(party, n) as votes from (
-           select left(b.pu, $5) as k, v.key as party, sum(v.value::int)::int as n
+           select ${key('b.pu')} as k, v.key as party, sum(v.value::int)::int as n
              from best b, jsonb_each_text(b.votes) v group by 1, 2) t group by k),
        verified as (
-         select left(pu_code, $5) as k, count(*) filter (where status = 'verified')::int as verified,
+         select ${key('pu_code')} as k, count(*) filter (where status = 'verified')::int as verified,
                 count(*) filter (where status = 'mismatch')::int as mismatch
            from public.verifications where tenant_id = $1 and election_id = $2 and pu_code like $3 group by 1),
        issues as (
-         select left(area_code, $5) as k, count(*)::int as open,
+         select ${key('area_code')} as k, count(*)::int as open,
                 count(*) filter (where severity = 'critical')::int as critical, count(*) filter (where severity = 'high')::int as high,
                 count(*) filter (where severity = 'medium')::int as medium, count(*) filter (where severity = 'low')::int as low,
                 count(*) filter (where status = 'escalated')::int as escalated
            from public.cases where tenant_id = $1 and status = any($6) and length(area_code) >= $5 and area_code like $3 group by 1),
        people as (
-         select left(area_code, $5) as k,
+         select ${key('area_code')} as k,
                 count(*) filter (where role = 'agent')::int as agents,
                 (array_agg(jsonb_build_object('id', id, 'full_name', full_name) order by full_name)
-                   filter (where role = 'coordinator' and length(area_code) = $5))[1] as coordinator
+                   filter (where role = 'coordinator' and length(area_code) = $5 and not ${bySenatorial}))[1] as coordinator
            from public.volunteers where tenant_id = $1 and status in ('invited', 'active') and area_code like $3 group by 1),
        spots as (
          select pu_code as k, avg(lat) as lat, avg(lng) as lng from public.checkins
@@ -128,34 +137,64 @@ export class MapController {
         order by kids.code`,
       [u.tid, election, prefix, parent, len, OPEN]);
 
+    const [shape] = parent === 'NG' ? [] : await this.db.system(`select geometry, center_lat, center_lng from public.area_shapes where code = $1`, [parent]);
+
+    // Wards and units with no outline or location yet get rough places inside their parent, so every one can be
+    // seen and opened (shown as dashed circles, marked approximate). A ward with no outline gets one too.
+    const approxArea = len === 12 && !shape ? await this.wardSpot(parent) : null;
+    if (len === 8 || len === 12) {
+      const missing = rows.filter((r) => !r.shape && (r.lat == null || r.lng == null));
+      const spots = shape?.geometry ? spreadInside(shape.geometry, missing.length) : approxArea ? spreadAround(approxArea, missing.length) : [];
+      spots.forEach((p, i) => Object.assign(missing[i], { lat: p.lat, lng: p.lng, radius_m: p.radius_m, approx: true }));
+    }
+
     // Issues on the area itself rather than one of its sub-areas (e.g. an LGA-wide case while viewing its wards)
     const [wide] = await this.db.system(
       `select count(*)::int as open, count(*) filter (where severity = 'critical')::int as critical from public.cases
         where tenant_id = $1 and status = any($2) and area_code = $3`,
       [u.tid, OPEN, parent]);
 
-    const [shape] = parent === 'NG' ? [] : await this.db.system(`select geometry, center_lat, center_lng from public.area_shapes where code = $1`, [parent]);
     const [t] = await this.db.system(`select settings from public.tenants where id = $1`, [u.tid]);
     const parties = election
       ? (await this.db.system(`select party from public.election_parties where election_id = $1 order by ballot_order`, [election])).map((p) => p.party)
       : [];
 
     return {
-      scope, parent, level: parent === 'NG' ? 'national' : LEVEL_OF_LEN[parent.length], childLevel: LEVEL_OF_LEN[len],
+      scope, parent, level: parent === 'NG' ? 'national' : district ? 'senatorial' : LEVEL_OF_LEN[parent.length],
+      childLevel: bySenatorial ? 'senatorial' : LEVEL_OF_LEN[len], group: bySenatorial || district ? 'senatorial' : null,
       election, parties, partyColours: t?.settings?.party_colours ?? {},
-      breadcrumb: await this.breadcrumb(scope, parent),
-      shape: shape?.geometry ?? null, center: shape ? { lat: shape.center_lat, lng: shape.center_lng } : null,
+      breadcrumb: await this.breadcrumb(scope, parent, groupQ === 'senatorial' || district),
+      shape: shape?.geometry ?? null,
+      center: shape ? { lat: shape.center_lat, lng: shape.center_lng } : approxArea ? { lat: approxArea.lat, lng: approxArea.lng } : null,
+      approxArea,
       areaWide: wide ?? { open: 0, critical: 0 },
-      children: rows.map((r) => ({ ...r, leader: leader(r.votes) })),
+      children: rows.map((r) => ({ ...r, approx: !!r.approx, radius_m: r.radius_m ?? null, leader: leader(r.votes) })),
     };
   }
 
-  /** From the person's own area down to `parent`, with names. */
-  private async breadcrumb(scope: string, parent: string) {
-    const codes = parent === 'NG' ? ['NG'] : [...(scope === 'NG' ? ['NG'] : []), ...chain(parent).filter((c) => inScope(scope, c))];
+  /** The rough place of a ward with no outline: the same one it gets on its LGA's map (spread over the LGA outline). */
+  private async wardSpot(ward: string): Promise<Spot | null> {
+    if (ward.length !== 8) return null;
+    const [lga] = await this.db.system(`select geometry from public.area_shapes where code = $1`, [ward.slice(0, 5)]);
+    if (!lga?.geometry) return null;
+    const list = (await this.db.system(
+      `select w.code from public.wards w where w.lga_code = $1 and not exists (select 1 from public.area_shapes s where s.code = w.code) order by w.code`,
+      [ward.slice(0, 5)])).map((w) => w.code as string);
+    const i = list.indexOf(ward);
+    return i < 0 ? null : spreadInside(lga.geometry, list.length)[i];
+  }
+
+  /** From the person's own area down to `parent`, with names; by district, the district sits between state and LGA. */
+  private async breadcrumb(scope: string, parent: string, senatorial = false) {
+    let path = parent === 'NG' ? [] : /^\d{2}-SD\d$/.test(parent) ? [parent.slice(0, 2), parent] : chain(parent);
+    if (senatorial && parent.length >= 5 && !parent.includes('SD')) {
+      const [l] = await this.db.system(`select senatorial_code from public.lgas where code = $1`, [parent.slice(0, 5)]);
+      if (l?.senatorial_code) path = [path[0], l.senatorial_code, ...path.slice(1)];
+    }
+    const codes = parent === 'NG' ? ['NG'] : [...(scope === 'NG' ? ['NG'] : []), ...path.filter((c) => inScope(scope, c.includes('SD') ? c.slice(0, 2) : c))];
     const names = await this.db.system(
       `select code, name from public.states where code = any($1) union all select code, name from public.lgas where code = any($1)
-       union all select code, name from public.wards where code = any($1)`, [codes]);
+       union all select code, name from public.wards where code = any($1) union all select code, name from public.senatorial_districts where code = any($1)`, [codes]);
     return codes.map((code) => ({ code, name: code === 'NG' ? 'Nigeria' : names.find((n) => n.code === code)?.name ?? code }));
   }
 }

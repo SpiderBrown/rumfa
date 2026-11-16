@@ -81,7 +81,8 @@ export default function configuration() {
     },
     storage: {
       /** supabase: private Supabase Storage buckets via the service key. local: files on disk (development, tests). */
-      driver: (process.env.STORAGE_DRIVER ?? (process.env.SUPABASE_URL ? 'supabase' : 'local')) as 'supabase' | 'local',
+      // Supabase only when both the address and the service key are set; otherwise files stay on this server's disk
+      driver: (process.env.STORAGE_DRIVER || (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? 'supabase' : 'local')) as 'supabase' | 'local',
       supabaseUrl: (process.env.SUPABASE_URL ?? '').replace(/\/+$/, ''),
       serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
       localDir: process.env.STORAGE_DIR ?? '.storage',

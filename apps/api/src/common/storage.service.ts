@@ -24,6 +24,12 @@ export class StorageService {
     this.cfg = config.get('storage')!;
     this.secret = config.get<AppConfig['auth']>('auth')!.jwtSecret;
     this.publicUrl = config.get('publicUrl')!;
+    if (this.cfg.driver === 'supabase' && !this.cfg.serviceKey) {
+      this.log.error('STORAGE_DRIVER=supabase but SUPABASE_SERVICE_ROLE_KEY is empty: every upload will be refused');
+    }
+    if (this.cfg.driver === 'local' && this.cfg.supabaseUrl && !this.cfg.serviceKey) {
+      this.log.warn(`SUPABASE_SERVICE_ROLE_KEY is not set, so files are stored on this server under ${this.cfg.localDir}`);
+    }
   }
 
   /** Files of this bucket live on local disk (the local driver, or a bucket listed in STORAGE_LOCAL_BUCKETS). */
@@ -84,8 +90,17 @@ export class StorageService {
     const res = await fetch(`${this.cfg.supabaseUrl}${path}`, {
       method: 'POST', headers: { Authorization: `Bearer ${this.cfg.serviceKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    if (res.status === 404 || res.status === 400) throw new NotFoundException('File not found');
-    if (!res.ok) { this.log.error(`Storage ${res.status} on ${path}`); throw new ServiceUnavailableException('File storage unavailable'); }
+    if (!res.ok) {
+      // Supabase reports refused keys as 400 with an inner 401/403: that is our setup, not a missing file
+      const body = await res.json().catch(() => ({})) as { statusCode?: string; message?: string };
+      const inner = Number(body.statusCode ?? res.status);
+      if (inner === 401 || inner === 403) {
+        this.log.error(`Storage refused the service key on ${path}: ${body.message ?? res.status}`);
+        throw new ServiceUnavailableException('File storage is not set up on the server. Your file is kept on the phone and will be sent later.');
+      }
+      if (res.status === 404 || res.status === 400) throw new NotFoundException('File not found');
+      this.log.error(`Storage ${res.status} on ${path}`); throw new ServiceUnavailableException('File storage unavailable');
+    }
     return res.json();
   }
 

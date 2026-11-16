@@ -26,3 +26,19 @@ test('a bucket listed in STORAGE_LOCAL_BUCKETS stays on disk while others use Su
     expect(calls).toHaveLength(1);
   } finally { global.fetch = real; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a refused Supabase key is a server setup problem (retried by the phone), not a missing file', async () => {
+  const cfg: Record<string, any> = {
+    storage: { driver: 'supabase', supabaseUrl: 'https://example.supabase.co', serviceKey: 'bad', localDir: '.storage', localBuckets: [],
+      uploadTtlSeconds: 600, viewTtlSeconds: 300, maxUploadBytes: 1024 },
+    auth: { jwtSecret: 'secret-for-tests-only' }, publicUrl: 'http://localhost:3000',
+  };
+  const s = new StorageService({ get: (k: string) => cfg[k] } as any);
+  const real = global.fetch;
+  global.fetch = (async () => new Response(JSON.stringify({ statusCode: '403', error: 'Unauthorized', message: 'Invalid Compact JWS' }), { status: 400 })) as any;
+  try {
+    const e = await s.uploadUrl('ec8a', 'x/y.jpg').catch((err) => err);
+    expect(e.getStatus()).toBe(503);
+    expect(e.message).toMatch(/not set up/);
+  } finally { global.fetch = real; }
+});

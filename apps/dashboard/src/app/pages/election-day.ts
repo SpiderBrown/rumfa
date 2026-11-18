@@ -78,10 +78,26 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
               <h2>Map of {{ areaName() }}</h2>
               <p class="muted sm">{{ layerNote() }}</p>
             </div>
+            <div class="map-tools">
+            @if (data()?.scope === 'NG' && (data()?.level === 'national' || data()?.level === 'zone')) {
+              <!-- The country by state or by geopolitical zone -->
+              <div class="r-seg" role="tablist" aria-label="Show Nigeria as">
+                <button role="tab" [class.on]="!zones()" [attr.aria-selected]="!zones()" (click)="setZones(false)">States</button>
+                <button role="tab" [class.on]="zones()" [attr.aria-selected]="zones()" (click)="setZones(true)">Zones</button>
+              </div>
+            }
+            @if (data()?.level === 'state' || data()?.level === 'senatorial') {
+              <!-- A state by LGA or by senatorial district (how Senate seats are won) -->
+              <div class="r-seg" role="tablist" aria-label="Show the state as">
+                <button role="tab" [class.on]="group() === 'lga'" [attr.aria-selected]="group() === 'lga'" (click)="setGroup('lga')">LGAs</button>
+                <button role="tab" [class.on]="group() === 'senatorial'" [attr.aria-selected]="group() === 'senatorial'" (click)="setGroup('senatorial')">Senatorial districts</button>
+              </div>
+            }
             <div class="r-seg" role="tablist" aria-label="Map layer">
               @for (l of layers; track l.id) {
                 <button role="tab" [class.on]="layer() === l.id" [attr.aria-selected]="layer() === l.id" (click)="pickLayer(l.id)">{{ l.name }}</button>
               }
+            </div>
             </div>
           </div>
           <div #map class="map" role="img" [attr.aria-label]="'Map of ' + areaName() + ' by ' + layer()"></div>
@@ -204,6 +220,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
     .card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
     .card-head p { margin-top: 2px; }
     .map { height: 420px; border-radius: 10px; }
+    .map-tools { display: flex; flex-wrap: wrap; gap: 8px; }
     .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 12px; color: var(--r-ink-2); }
     .legend span { display: inline-flex; align-items: center; gap: 6px; }
     .legend i { width: 20px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.08); }
@@ -259,6 +276,9 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   private pickedLayer = signal<MapLayer | null>(null);
   private tick = signal(0);
   private parent: string | undefined;
+  /** Grouping, shared with the full map: Nigeria by zone, a state by senatorial district */
+  zones = signal(read('rumfa.map.zones') === '1');
+  group = signal<'lga' | 'senatorial'>(read('rumfa.map.group') === 'senatorial' ? 'senatorial' : 'lga');
   private el = viewChild.required<ElementRef<HTMLElement>>('map');
   private areaMap: AreaMap | null = null;
   private stopLive: () => void = () => undefined;
@@ -374,13 +394,17 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   canDrill = computed(() => this.data()?.childLevel !== 'pu');
   kidsTitle = computed(() => {
     const lv = this.data()?.childLevel;
+    if (lv === 'zone') return 'By geopolitical zone';
     return 'By ' + ({ zone: 'zone', state: 'state', senatorial: 'senatorial district', lga: 'LGA', ward: 'ward', pu: 'polling unit' }[lv ?? 'state'] ?? 'area');
   });
 
   /** Open cases in the area shown, most urgent first */
   areaCases = computed(() => {
-    const parent = this.data()?.parent ?? 'NG';
-    return this.cases().filter((c) => parent === 'NG' || (c.pu_code ?? c.area_code).startsWith(parent))
+    const d = this.data(), parent = d?.parent ?? 'NG';
+    // A zone or a senatorial district has no code of its own in place codes: match its states or LGAs instead
+    const grouped = parent.startsWith('Z-') || parent.includes('SD');
+    const prefixes = grouped ? (d?.children ?? []).map((k) => k.code) : [parent];
+    return this.cases().filter((c) => parent === 'NG' || prefixes.some((p) => (c.pu_code ?? c.area_code).startsWith(p)))
       .sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || b.created_at.localeCompare(a.created_at));
   });
 
@@ -401,7 +425,8 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   async load() {
     try {
       const [d, cases] = await Promise.all([
-        this.api.get<DayData>('/map', { parent: this.parent }),
+        this.api.get<DayData>('/map', { parent: this.parent,
+          group: [this.zones() && 'zone', this.group() === 'senatorial' && 'senatorial'].filter(Boolean).join(',') || undefined }),
         this.api.get<CaseRow[]>('/cases', { status: 'queued,assigned,in_progress,escalated' }).catch(() => this.cases()),
       ]);
       const first = !this.data();
@@ -417,6 +442,18 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
     this.parent = code;
     void this.load();
     document.querySelector('mat-sidenav-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  setZones(on: boolean) {
+    this.zones.set(on); write('rumfa.map.zones', on ? '1' : '0');
+    // From a zone, "States" goes back to the whole country
+    if (!on && this.parent?.startsWith('Z-')) this.parent = 'NG';
+    void this.load();
+  }
+  setGroup(g: 'lga' | 'senatorial') {
+    this.group.set(g); write('rumfa.map.group', g);
+    // From a district, "LGAs" goes back to the whole state
+    if (g === 'lga' && this.parent?.includes('SD')) this.parent = this.parent.slice(0, 2);
+    void this.load();
   }
   pickStage(id: StageId) { this.pickedStage.set(this.pickedStage() === id ? null : id); }
   pickLayer(l: MapLayer) { this.pickedLayer.set(this.pickedLayer() === l ? null : l); }
@@ -437,3 +474,6 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   sevName(s: string) { return ({ critical: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' } as Record<string, string>)[s] ?? s; }
   place(c: CaseRow) { return (c.where && placeLine(c.where, false)) || c.pu_code || c.area_code; }
 }
+
+function read(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
+function write(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }

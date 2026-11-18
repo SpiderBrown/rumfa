@@ -178,7 +178,22 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
 
       <!-- Flags and open cases in this area: always beside the numbers; each opens in the situation room -->
       <aside class="r-card flags" aria-label="Flags and open cases">
-        <div class="card-head"><h2>Flags and cases</h2><span class="muted sm">{{ areaCases().length }} open</span></div>
+        <div class="f-head">
+          <h2>Flags and cases</h2>
+          <span class="muted sm">{{ caseScope() === 'area' ? 'in ' + areaName() : 'everywhere' }}</span>
+        </div>
+        <div class="f-tools">
+          <div class="r-seg" role="tablist" aria-label="Which area">
+            <button role="tab" [class.on]="caseScope() === 'area'" [attr.aria-selected]="caseScope() === 'area'" (click)="caseScope.set('area')">This area</button>
+            <button role="tab" [class.on]="caseScope() === 'all'" [attr.aria-selected]="caseScope() === 'all'" (click)="caseScope.set('all')">Everywhere</button>
+          </div>
+          <div class="r-seg" role="tablist" aria-label="Which cases">
+            @for (f of caseFilters; track f.id) {
+              <button role="tab" [class.on]="caseFilter() === f.id" [attr.aria-selected]="caseFilter() === f.id" (click)="caseFilter.set(f.id)"
+                [matTooltip]="f.hint">{{ f.label }} <span class="cnt">{{ caseCounts()[f.id] }}</span></button>
+            }
+          </div>
+        </div>
         @for (c of areaCases().slice(0, 12); track c.id) {
           <a class="flag r-focus" [routerLink]="['/room/case', c.id]">
             <span class="f-top"><span class="r-pill" [class]="c.severity">{{ sevName(c.severity) }}</span><span class="muted sm">{{ c.created_at | ago }}</span></span>
@@ -186,9 +201,12 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
             <span class="muted sm">{{ place(c) }}</span>
           </a>
         } @empty {
-          @if (data()) { <div class="calm"><mat-icon>verified</mat-icon><span>No open cases in {{ areaName() }}.</span></div> }
+          @if (data()) { <div class="calm"><mat-icon>verified</mat-icon><span>{{ emptyCases() }}</span></div> }
         }
         @if (areaCases().length > 12) { <a routerLink="/room" class="sm">All {{ areaCases().length }} in the situation room</a> }
+        @if (caseScope() === 'area' && hiddenElsewhere()) {
+          <button class="else sm" (click)="caseScope.set('all')">{{ hiddenElsewhere() }} more outside {{ areaName() }}: show everywhere</button>
+        }
       </aside>
     </div>
   </div>`,
@@ -257,7 +275,11 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
     .flags { flex: 1 1 300px; padding: 16px; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow: auto; box-sizing: border-box; }
     .flag { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--r-line-soft); border-radius: 10px; color: var(--r-ink); text-decoration: none; }
     .flag:hover { border-color: #9aa6b6; background: #fafbfc; }
-    .f-top { display: flex; align-items: center; gap: 8px; } .f-title { font-weight: 600; font-size: 14px; line-height: 1.35; }
+    .f-top { display: flex; align-items: center; gap: 8px; }
+    .f-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .f-tools { display: flex; flex-direction: column; gap: 6px; } .f-tools .r-seg { align-self: flex-start; }
+    .cnt { font-weight: 700; color: var(--r-muted); margin-left: 2px; } .on .cnt { color: var(--r-ink); }
+    .else { border: 0; background: none; color: #0f5e8c; font: inherit; font-weight: 600; text-align: left; padding: 4px 0; cursor: pointer; } .f-title { font-weight: 600; font-size: 14px; line-height: 1.35; }
     .calm { display: flex; align-items: center; gap: 8px; color: var(--r-accent-strong); padding: 12px 4px; font-size: 14px; }
     @media (max-width: 1000px) { .flags { position: static; max-height: none; } }
   `,
@@ -399,14 +421,43 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   });
 
   /** Open cases in the area shown, most urgent first */
-  areaCases = computed(() => {
+  caseScope = signal<'area' | 'all'>('area');
+  caseFilter = signal<'open' | 'urgent' | 'new'>('open');
+  readonly caseFilters = [
+    { id: 'open' as const, label: 'Open', hint: 'Every open case' },
+    { id: 'urgent' as const, label: 'Urgent', hint: 'Urgent and high only' },
+    { id: 'new' as const, label: 'New', hint: 'Opened in the last hour' },
+  ];
+  /** In the area shown? A zone or a district has no code of its own in place codes: its states or LGAs stand in */
+  private inArea = computed(() => {
     const d = this.data(), parent = d?.parent ?? 'NG';
-    // A zone or a senatorial district has no code of its own in place codes: match its states or LGAs instead
     const grouped = parent.startsWith('Z-') || parent.includes('SD');
     const prefixes = grouped ? (d?.children ?? []).map((k) => k.code) : [parent];
-    return this.cases().filter((c) => parent === 'NG' || prefixes.some((p) => (c.pu_code ?? c.area_code).startsWith(p)))
+    return (c: CaseRow) => parent === 'NG' || prefixes.some((p) => (c.pu_code ?? c.area_code).startsWith(p));
+  });
+  private passes(c: CaseRow, f: 'open' | 'urgent' | 'new') {
+    if (f === 'urgent') return c.severity === 'critical' || c.severity === 'high';
+    if (f === 'new') { this.tick(); return Date.now() - new Date(c.created_at).getTime() < 3_600_000; }
+    return true;
+  }
+  /** How many each filter would show, in the area picked */
+  caseCounts = computed(() => {
+    const scoped = this.cases().filter((c) => this.caseScope() === 'all' || this.inArea()(c));
+    return { open: scoped.length, urgent: scoped.filter((c) => this.passes(c, 'urgent')).length, new: scoped.filter((c) => this.passes(c, 'new')).length };
+  });
+  /** What the filter would show elsewhere, while following the map */
+  hiddenElsewhere = computed(() => this.cases().filter((c) => !this.inArea()(c) && this.passes(c, this.caseFilter())).length);
+  emptyCases = computed(() => {
+    const where = this.caseScope() === 'area' ? ` in ${this.areaName()}` : '';
+    return { open: `No open cases${where}.`, urgent: `Nothing urgent${where}.`, new: `No new cases${where} in the last hour.` }[this.caseFilter()];
+  });
+  /** The cases shown, most urgent first */
+  areaCases = computed(() => {
+    const scope = this.caseScope(), f = this.caseFilter();
+    return this.cases().filter((c) => (scope === 'all' || this.inArea()(c)) && this.passes(c, f))
       .sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || b.created_at.localeCompare(a.created_at));
   });
+
 
   constructor() {
     effect(() => { this.layer(); this.stage(); this.draw(); });

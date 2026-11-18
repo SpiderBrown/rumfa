@@ -10,7 +10,7 @@ import { Ui } from './ui';
  * also go by SMS: the app builds the coded message from the saved form, so the
  * agent never types it.
  */
-export type ItemKind = 'incident' | 'result' | 'callback' | 'checkin' | 'checklist' | 'quick' | 'message' | 'figures';
+export type ItemKind = 'incident' | 'incident_details' | 'result' | 'callback' | 'checkin' | 'checklist' | 'quick' | 'message' | 'figures';
 export interface OutItem {
   id: string;                 // client_id, makes server writes idempotent
   kind: ItemKind;
@@ -87,6 +87,15 @@ export class Outbox {
     await this.put(item);
     void this.sync();
     return item;
+  }
+
+  /** Takes back something not sent yet (e.g. an SOS sent by mistake while there was no signal). False if it already went. */
+  async remove(id: string): Promise<boolean> {
+    const i = this.all().find((x) => x.id === id);
+    if (!i || i.status === 'sent' || i.status === 'sending' || i.smsSentAt) return false;
+    await tx('readwrite', (s) => s.delete(id));
+    await this.reload();
+    return true;
   }
 
   /** Can this item go by SMS, and is it time to offer it? */
@@ -181,6 +190,13 @@ export class Outbox {
         const mediaPaths = i.photo ? [await this.api.upload('incident', i.photo, 'jpg', p['pu'])] : [];
         await this.api.post('/incidents', { pu: p['pu'], category: p['category'], severity: p['severity'] ?? undefined,
           description: p['description'] ?? undefined, mediaPaths, sos: !!p['sos'], clientId });
+        return;
+      }
+      case 'incident_details': {
+        // Follows its report (the outbox sends oldest first), found on the server by that report's id
+        const mediaPaths = i.photo ? [await this.api.upload('incident', i.photo, 'jpg', p['pu'])] : [];
+        await this.api.post('/incidents/details', { clientId: p['reportId'], category: p['category'] ?? undefined, note: p['note'] ?? undefined,
+          mediaPaths, mistake: p['mistake'] ?? undefined });
         return;
       }
       case 'result': {

@@ -86,7 +86,7 @@ export type QueueKind = 'state' | 'security' | 'legal' | 'helpdesk' | 'national'
 
 export interface IncidentCategory {
   code: string;          // stable code stored in the database and SMS
-  sms: string;           // 1-2 letter code used in the SMS fallback
+  sms: string;           // 1-3 letter code used in the SMS fallback
   label: string;
   severity: Severity;    // default severity
   queue: QueueKind;
@@ -95,6 +95,8 @@ export interface IncidentCategory {
 
 // Draft taxonomy; to be approved by the campaign before go-live.
 export const INCIDENT_CATEGORIES: IncidentCategory[] = [
+  // Sent by holding SOS in the agent app, before saying what is happening (the agent may add that after)
+  { code: 'sos', sms: 'SOS', label: 'Emergency (SOS)', severity: 'critical', queue: 'security' },
   { code: 'violence', sms: 'V', label: 'Violence or attack', severity: 'critical', queue: 'security' },
   { code: 'ballot_snatching', sms: 'BS', label: 'Ballot box snatching', severity: 'critical', queue: 'security' },
   { code: 'thugs', sms: 'TH', label: 'Thugs or intimidation', severity: 'high', queue: 'security' },

@@ -110,7 +110,15 @@ export class AppBar implements OnDestroy {
     this.holding.set(false);
     this.progress.set(0);
     navigator.vibrate?.([40, 60, 40]);
-    void this.router.navigate(['/report'], { queryParams: { sos: 1 } });
+    void this.sendSos();
+  }
+
+  /** SOS goes at once, with no question first; what is happening can be added on the next screen. */
+  private async sendSos() {
+    const me = this.api.me();
+    if (!me) return;
+    const item = await this.outbox.add('incident', { pu: me.area_code, category: 'sos', severity: 'critical', description: null, sos: true }, 'SOS');
+    await this.router.navigate(['/sos', item.id]);
   }
 
   openOutbox() { void this.sheet.open(); }

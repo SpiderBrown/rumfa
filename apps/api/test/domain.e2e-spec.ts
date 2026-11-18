@@ -84,7 +84,7 @@ describe('API endpoints and webhooks (e2e)', () => {
     expect(d.body.case).toMatchObject({ what: 'BVAS not working',
       where: { name: pl.pu, parents: [pl.ward, `${pl.lga} LGA`, pl.state], code: '19-28-02-003', level: 'pu' } });
     const listed = (await http.get(api('/cases')).set(as(SUP)).expect(200)).body.find((c: any) => c.id === caseId);
-    expect(listed).toMatchObject({ what: 'BVAS not working', where: { code: '19-28-02-003' } });
+    expect(listed).toMatchObject({ what: 'BVAS not working', where: { code: '19-28-02-003' }, report_count: 1, reporter_count: 1, alert_count: 0 });
     expect(d.body.people.some((p: any) => p.id === WARD)).toBe(true);
     const assignee = d.body.case.assigned_to;
     expect([OP_HA, OP_EN]).toContain(assignee);
@@ -109,6 +109,35 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.post(api(`/cases/${sc.id}/resolve`)).set(as(OP_EN)).send({ text: 'Police on site' }).expect(204);
     expect((await http.get(api(`/cases/${sc.id}`)).set(as(SUP))).body.case.status).toBe('resolved');
     await http.post(api(`/cases/${sc.id}/close`)).set(as(SUP)).expect(204);
+  });
+
+  it('SOS sends first: an emergency with no type, then what is happening, a note; or "sent by mistake"', async () => {
+    const id = uuid();
+    const sos = (await http.post(api('/incidents')).set(as(AGENT4)).send({ pu: '19-28-02-004', category: 'sos', sos: true, clientId: id }).expect(200)).body;
+    let d = (await http.get(api(`/cases/${sos.case_id}`)).set(as(SUP)).expect(200)).body;
+    expect(d.case).toMatchObject({ category: 'sos', severity: 'critical' });
+    await http.post(api('/incidents/details')).set(as(AGENT4)).send({ clientId: id, category: 'thugs', note: 'Five men with sticks' }).expect(200);
+    d = (await http.get(api(`/cases/${sos.case_id}`)).set(as(SUP)).expect(200)).body;
+    expect(d.case).toMatchObject({ category: 'thugs', severity: 'critical', title: 'Thugs or intimidation at 19-28-02-004' });
+    expect(d.incidents.find((i: any) => i.client_id === id)).toMatchObject({ category: 'thugs', is_sos: true, description: 'Five men with sticks' });
+    expect(d.events.some((e: any) => e.body === 'The agent added: Thugs or intimidation · Five men with sticks')).toBe(true);
+    // A photo on its own (this once failed with "malformed array literal")
+    const [{ tenant_id: tid }] = await ds.query(`select tenant_id from public.volunteers where id = $1`, [AGENT4]);
+    const photo = `${tid}/incident/19-28-02-004/sos-photo.jpg`;
+    await http.post(api('/incidents/details')).set(as(AGENT4)).send({ clientId: id, mediaPaths: [photo] }).expect(200);
+    d = (await http.get(api(`/cases/${sos.case_id}`)).set(as(SUP)).expect(200)).body;
+    expect(d.incidents.find((i: any) => i.client_id === id).media_paths).toEqual([photo]);
+    expect(d.events.some((e: any) => e.body === 'The agent added: a photo')).toBe(true);
+    // Only the reporter can add to their report
+    await http.post(api('/incidents/details')).set(as(AGENT3)).send({ clientId: id, note: 'x' }).expect(400);
+
+    // Sent by mistake: the case closes (nobody has taken it yet), and the room can see why
+    const oops = uuid();
+    const m = (await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'sos', sos: true, clientId: oops }).expect(200)).body;
+    await http.post(api('/incidents/details')).set(as(AGENT3)).send({ clientId: oops, mistake: true }).expect(200);
+    d = (await http.get(api(`/cases/${m.case_id}`)).set(as(SUP)).expect(200)).body;
+    expect(d.case).toMatchObject({ status: 'closed', severity: 'low', outcome: 'Sent by mistake (the reporter cancelled it)' });
+    expect(d.incidents.find((i: any) => i.client_id === oops)).toMatchObject({ is_sos: false, severity: 'low' });
   });
 
   it('client B cannot see or touch client A records', async () => {
@@ -554,6 +583,12 @@ describe('API endpoints and webhooks (e2e)', () => {
   });
 
   it('two admins are needed for a top-up batch', async () => {
+    // A premium add-on: refused until Rumfa switches it on for the client
+    await http.get(api('/topups/plans')).set(as(ADMIN)).expect(403);
+    await http.get(api('/voice/campaigns')).set(as(ADMIN)).expect(403);
+    const ctx = (await http.get(api('/me/context')).set(as(ADMIN)).expect(200)).body;
+    expect(ctx.addons).toEqual({ voice: false, airtime: false });
+    await ds.query(`update public.tenants set settings = settings || '{"addons":{"airtime":true}}' where id = (select tenant_id from public.volunteers where id = $1)`, [ADMIN]);
     const plan = await http.post(api('/topups/plans')).set(as(ADMIN)).send({ name: 'Election day airtime', kind: 'airtime', amountNgn: 500, targetRoles: ['agent'] }).expect(201);
     const b = await http.post(api('/topups/batches')).set(as(ADMIN)).send({ planId: plan.body.id }).expect(201);
     await http.post(api(`/topups/batches/${b.body.batchId}/approve`)).set(as(ADMIN)).send({ approve: true }).expect(400);

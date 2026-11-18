@@ -1,9 +1,11 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
-import { IonBadge, IonContent, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote, IonRefresher,
+import { IonBadge, IonContent, IonFab, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote, IonRefresher,
   IonRefresherContent, ViewWillEnter } from '@ionic/angular';
 import { Api } from '../core/api';
+import { Checkin } from '../core/checkin';
+import { CheckinFlow } from '../core/checkin-flow';
 import { AppBar } from '../core/app-bar';
 import { Calls } from '../core/calls';
 import { Ui } from '../core/ui';
@@ -21,7 +23,7 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
  */
 @Component({
   selector: 'page-messages',
-  imports: [NgTemplateOutlet, RouterLink, AppBar, IonBadge, IonContent, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
+  imports: [NgTemplateOutlet, RouterLink, AppBar, IonBadge, IonContent, IonFab, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
     IonRefresher, IonRefresherContent],
   template: `
   <app-bar [title]="t('Chats')" [sos]="api.atUnit()" />
@@ -38,10 +40,18 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
         <div class="cacts">
           <button (click)="message(c)"><ion-icon name="chatbubble" /><span>{{ t('Message') }}</span></button>
           @if (calls.modes().length) { <button class="primary" (click)="call(c)"><ion-icon name="call" /><span>{{ t('Call') }}</span></button> }
-          <button routerLink="/callback"><ion-icon name="phone-portrait" /><span>{{ t('Call me back') }}</span></button>
+          <button routerLink="/callback" [class.open]="!!callback()"><ion-icon name="phone-portrait" /><span>{{ t('Call me back') }}</span></button>
         </div>
-        <div class="hintline">{{ t('No airtime or data? Tap Call me back and they will ring you.') }}</div>
+        @if (callback(); as r) { <div class="hintline open" routerLink="/callback">{{ callbackText(r.status) }}</div> }
+        @else { <div class="hintline">{{ t('No airtime or data? Tap Call me back and they will ring you.') }}</div> }
       </div>
+    } @else if (canAskCall()) {
+      <button class="callme" routerLink="/callback">
+        <ion-icon name="phone-portrait" />
+        <span><b>{{ t('Ask my coordinator to call me') }}</b>
+          {{ callback() ? callbackText(callback()!.status) : t('No airtime or data? They will ring you.') }}</span>
+        <ion-icon name="chevron-forward" class="go" />
+      </button>
     }
     <ion-list>
       @if (area().length) { <ion-list-header>{{ t('Teams') }}</ion-list-header> }
@@ -73,6 +83,13 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
         </div>
       </ion-item>
     </ng-template>
+
+    <!-- The same Report button as on Today, so SOS is never the only way to tell the room about a problem -->
+    @if (api.atUnit()) {
+      <ion-fab slot="fixed" vertical="bottom" horizontal="end">
+        <button class="report" (click)="report()" [attr.aria-label]="t('Report a problem')"><ion-icon name="warning" /><span>{{ t('Report') }}</span></button>
+      </ion-fab>
+    }
   </ion-content>`,
   styles: `
     .coord { margin: 12px 12px 6px; padding: 12px; border-radius: 16px; background: #f1f8f3; border: 1px solid #d5eadb; }
@@ -82,7 +99,16 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
     .cacts { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; margin-top: 12px; }
     .cacts button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 0; border-radius: 12px;
       background: #fff; color: var(--ion-color-primary); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-    .cacts button ion-icon { font-size: 22px; } .cacts button.primary { background: var(--ion-color-primary); color: #fff; }
+    .cacts button ion-icon { font-size: 22px; } .cacts button.open { outline: 2px solid var(--ion-color-primary); }
+    .hintline.open { color: var(--ion-color-primary); font-weight: 600; }
+    .report { display: flex; align-items: center; gap: 8px; height: 54px; padding: 0 22px 0 18px; border: 0; border-radius: 27px; background: #ea580c;
+      color: #fff; font: inherit; font-weight: 700; font-size: 16px; box-shadow: 0 4px 14px rgba(234,88,12,.4); }
+    .report:active { background: #c2410c; transform: scale(.97); } .report ion-icon { font-size: 24px; }
+    ion-list { padding-bottom: 80px; }
+    .callme { display: flex; align-items: center; gap: 12px; width: calc(100% - 24px); margin: 12px 12px 6px; padding: 14px; border: 1px solid #d5eadb;
+      border-radius: 16px; background: #f1f8f3; color: var(--ion-text-color); font: inherit; text-align: left; }
+    .callme span { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+    .callme > ion-icon:first-child { font-size: 28px; color: var(--ion-color-primary); } .callme .go { font-size: 20px; opacity: .5; } .cacts button.primary { background: var(--ion-color-primary); color: #fff; }
     .hintline { margin-top: 8px; font-size: 12px; color: var(--ion-color-medium); text-align: center; }
     .avatar { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-right: 12px;
       background: #e7f1ea; color: var(--ion-color-primary); font-weight: 700; }
@@ -104,22 +130,45 @@ export default class MessagesPage implements OnDestroy, ViewWillEnter {
   private router = inject(Router);
   private ui = inject(Ui);
   t = inject(I18n).t;
+  private ci = inject(Checkin);
+  private flow = inject(CheckinFlow);
   coordinator = signal<Coordinator | null>(null);
+  /** An open "call me" request, shown on the coordinator card */
+  callback = signal<{ id: string; status: string } | null>(null);
+  /** State coordinators have nobody above them to ask */
+  canAskCall = () => !(this.api.isCoordinator() && this.api.me()?.level === 'state');
   area = signal<Channel[]>([]);
   private all = signal<Channel[]>([]);
   loaded = signal(false);
   others = computed(() => this.all().filter((c) => c.kind === 'case' || c.kind === 'direct').slice(0, 50));
   private unfollow: (() => void)[] = [];
   private stopLive = this.api.onChange(() => this.soon(), ['messages']);
+  private stopCallback = this.api.onChange(() => void this.loadCallback(), ['callback_requests']);
   private pending: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() { void this.load(); void this.loadCoordinator(); }
+  constructor() { void this.load(); void this.loadCoordinator(); void this.loadCallback(); }
   /** Coming back from a chat: its unread count is now 0 */
-  ionViewWillEnter() { if (this.loaded()) void this.load(); }
-  ngOnDestroy() { this.stopLive(); this.unfollow.forEach((f) => f()); if (this.pending) clearTimeout(this.pending); }
+  ionViewWillEnter() { if (this.loaded()) { void this.load(); void this.loadCallback(); } }
+  ngOnDestroy() { this.stopLive(); this.stopCallback(); this.unfollow.forEach((f) => f()); if (this.pending) clearTimeout(this.pending); }
 
   private soon() { if (!this.pending) this.pending = setTimeout(() => { this.pending = null; void this.load(); }, 1500); }
 
+  async report() {
+    if (this.ci.required()) {
+      if (!(await this.ui.confirm('Check in first', 'Check in at your polling unit before you start. It tells the situation room you are in place.', 'Check in now', 'Cancel'))) return;
+      if (!(await this.flow.run())) return;
+    }
+    await this.router.navigateByUrl('/report');
+  }
+  async loadCallback() {
+    if (!this.canAskCall()) return;
+    const r = await this.api.get<any>('/callbacks/mine').catch(() => undefined);
+    if (r !== undefined) this.callback.set(r && r.id ? r : null);
+  }
+  callbackText(s: string) {
+    return ({ waiting: this.t('Call requested: your coordinator will call you'), escalated: this.t('Call requested: the situation room will call you'),
+      calling: this.t('Calling you now…'), no_answer: this.t('We could not reach you; we will try again soon') } as Record<string, string>)[s] ?? this.t('Call requested');
+  }
   async loadCoordinator() {
     if (this.api.isCoordinator() && this.api.me()?.level === 'state') return;
     const c = await this.api.get<Coordinator | null>('/me/coordinator').catch(() => undefined);

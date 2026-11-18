@@ -52,6 +52,14 @@ class IncidentDto {
   @ApiProperty() @IsUUID() clientId: string;
 }
 
+class IncidentDetailsDto {
+  @ApiProperty({ description: 'The app\'s id for the report (the clientId it was sent with)' }) @IsUUID() clientId: string;
+  @ApiPropertyOptional({ description: 'What the emergency is (replaces "Emergency (SOS)")' }) @IsOptional() @IsString() @MaxLength(40) category?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) note?: string;
+  @ApiPropertyOptional() @IsOptional() @IsArray() @ArrayMaxSize(6) @IsString({ each: true }) mediaPaths?: string[];
+  @ApiPropertyOptional({ description: 'The SOS was sent by mistake' }) @IsOptional() @IsBoolean() mistake?: boolean;
+}
+
 function votesOk(v: Record<string, number>) {
   if (Object.keys(v).length > 40 || Object.entries(v).some(([k, n]) => !/^[A-Z]{1,8}$/.test(k) || !Number.isInteger(n) || n < 0 || n > 100000)) {
     throw new BadRequestException('Votes must be whole numbers per party code');
@@ -157,6 +165,15 @@ export class FieldController {
     return this.db.asUser(user, (q) => callFn(q, 'submit_result', {
       p_pu: d.pu, p_registered: d.registered, p_accredited: d.accredited, p_rejected: d.rejected, p_total_valid: d.totalValid,
       p_votes: d.votes, p_photo: d.photoPath ?? null, p_client_id: d.clientId,
+    }));
+  }
+
+  @Post('incidents/details') @HttpCode(200)
+  @ApiOperation({ summary: 'After an SOS or report: what is happening, a note, a photo, or "sent by mistake" (the reporter only)' })
+  incidentDetails(@CurrentUser() user: AuthUser, @Body() d: IncidentDetailsDto) {
+    (d.mediaPaths ?? []).forEach((p) => ownFile(user, p));
+    return this.db.asUser(user, (q) => callFn(q, 'add_incident_details', {
+      p_client_id: d.clientId, p_category: d.category ?? null, p_note: d.note ?? null, p_media: d.mediaPaths ?? [], p_mistake: d.mistake ?? false,
     }));
   }
 

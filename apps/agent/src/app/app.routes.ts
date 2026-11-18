@@ -40,6 +40,8 @@ export const routes: Routes = [
     ],
   },
   { path: '', pathMatch: 'full', canActivate: [ready, landing], children: [] },
+  // After holding SOS (already sent): never waits for check-in
+  { path: 'sos/:id', canActivate: [ready], loadComponent: () => import('./pages/sos').then((m) => m.default) },
   { path: 'report', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/report').then((m) => m.default) },
   { path: 'result', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/result').then((m) => m.default) },
   { path: 'count', canActivate: [ready, checkedIn], loadComponent: () => import('./pages/count').then((m) => m.default) },

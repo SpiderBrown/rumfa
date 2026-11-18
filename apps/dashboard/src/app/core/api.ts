@@ -56,7 +56,14 @@ export class Api {
 
   async init(): Promise<void> {
     try { this.session = JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { this.session = null; }
-    if (this.session) await this.loadContext().catch(() => this.clear());
+    // A refused session signs out; a dropped connection or a server hiccup is tried again (it should not)
+    for (let attempt = 1; this.session && !this.me(); attempt++) {
+      try { await this.loadContext(); } catch (e) {
+        const refused = e instanceof ApiError && (e.status === 401 || e.status === 403);
+        if (refused || attempt >= 4) { if (refused) this.clear(); break; }
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+      }
+    }
     this.ready.set(true);
   }
 

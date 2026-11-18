@@ -6,6 +6,12 @@ const signedIn: CanActivateFn = () => {
   const s = inject(Api);
   return s.me() ? true : inject(Router).parseUrl('/login');
 };
+/** Where "/" lands: each role on the page it works from */
+const landing: CanActivateFn = () => {
+  const role = inject(Api).me()?.role ?? '';
+  const to = role === 'analyst' ? '/map' : role === 'voice_ops' ? '/voice' : '/room';
+  return inject(Router).parseUrl(to);
+};
 const addon = (a: 'voice' | 'airtime'): CanActivateFn => () => inject(Api).addons()[a] || inject(Router).parseUrl('/');
 const roles = (...r: string[]): CanActivateFn => () => r.includes(inject(Api).me()?.role ?? '') || inject(Router).parseUrl('/');
 
@@ -14,9 +20,10 @@ export const routes: Routes = [
   {
     path: '', canActivate: [signedIn], loadComponent: () => import('./shell').then((m) => m.Shell),
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'room' },
+      { path: '', pathMatch: 'full', canActivate: [landing], children: [] },
       { path: 'room', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
-      { path: 'room/case/:id', loadComponent: () => import('./pages/room/case-detail').then((m) => m.CaseDetailPage) },
+      // A case opens beside the queue
+      { path: 'room/case/:id', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
       { path: 'map', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/map').then((m) => m.MapPage) },
       { path: 'polling-day', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/polling-day').then((m) => m.PollingDayPage) },
       { path: 'checkins', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/checkins').then((m) => m.CheckinsPage) },

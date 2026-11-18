@@ -15,7 +15,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
 import { Calls } from '../../core/calls';
-import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine, reportsLine } from '../../core/ui';
+import { AgoPipe, SEVERITY_COLOR, Ui, label, minutesText, placeLine, reportsLine } from '../../core/ui';
 import { LiveViewer } from './live-viewer';
 import type { CaseRow } from './queue';
 
@@ -28,17 +28,18 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
     MatInputModule, MatListModule, MatMenuModule, MatSelectModule, MatTabsModule, MatTooltipModule, AgoPipe, LiveViewer],
   template: `
   @if (c(); as c) {
-  <a routerLink="/room" class="back"><mat-icon>arrow_back</mat-icon> Queue</a>
-  <div class="title">
-    <span class="sev" [style.background]="sevColor[c.severity]">{{ c.severity }}</span>
-    <h1>{{ c.what ?? c.title }}</h1>
-  </div>
-  @if (c.where) { <div class="where"><mat-icon>place</mat-icon>{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }
-  <div class="meta">
-    {{ label(c.status) }} · {{ c.report_count }} report{{ c.report_count === 1 ? '' : 's' }}: {{ reportsLine(c.report_count, c.reporter_count, alerts().length) }} · opened {{ c.created_at | ago }}
-    @if (c.status === 'assigned') { · acknowledge {{ c.ack_due_at | ago }} } @else if (!['resolved','closed','merged'].includes(c.status)) { · due {{ c.due_at | ago }} }
-    @if (c.merged_into) { · merged into <a [routerLink]="['/room/case', c.merged_into]">another case</a> }
-  </div>
+  <div class="wrap" [class.embedded]="embedded()">
+  @if (!embedded()) { <a routerLink="/room" class="back"><mat-icon>arrow_back</mat-icon> Situation room</a> }
+  <div class="head">
+    <div class="row1">
+      <span class="r-pill" [class]="c.severity">{{ sevName(c.severity) }}</span>
+      <span class="muted">{{ catLabel(c.category) }} · opened {{ c.created_at | ago }}</span>
+      <span class="state" [class.late]="late(c)">{{ stateLine(c) }}</span>
+    </div>
+    <h2 class="title">{{ c.what ?? c.title }}</h2>
+    @if (c.where) { <div class="where"><mat-icon>place</mat-icon>{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }
+    <div class="meta">{{ reportsLine(c.report_count, c.reporter_count, alerts().length) }}
+      @if (c.merged_into) { · merged into <a [routerLink]="['/room/case', c.merged_into]">another case</a> }</div>
 
   <div class="actions">
     @if (c.status === 'assigned' && c.assigned_to === me()) { <button mat-flat-button (click)="act('acknowledge', {}, 'Acknowledged')">Acknowledge</button> }
@@ -66,6 +67,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
         <button mat-menu-item (click)="mergeInto(o)">{{ o.what ?? o.title }} · {{ place(o.where, false) || o.pu_code || o.area_code }} ({{ o.report_count }} reports)</button> }
         @empty { <button mat-menu-item disabled>No open cases nearby</button> }</mat-menu>
     }
+  </div>
   </div>
 
   @if (openSuggestions().length && api.isSupervisor()) {
@@ -171,17 +173,25 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
       }
     </aside>
   </div>
+  </div>
   }`,
   styles: `
     .back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; color: var(--mat-sys-primary); }
     .where { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-on-surface-variant); margin-bottom: 4px; }
     .where mat-icon { font-size: 18px; width: 18px; height: 18px; } .where .code { color: var(--mat-sys-outline); font-size: 12px; margin-left: 4px; }
-    .title { display: flex; gap: 12px; align-items: center; } h1 { font: var(--mat-sys-headline-small); margin: 8px 0; }
-    .meta { color: var(--mat-sys-on-surface-variant); margin-bottom: 12px; }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    :host { display: block; container-type: inline-size; }
+    .wrap.embedded { background: #fff; border: 1px solid var(--r-line); border-radius: var(--r-radius); padding: 18px 22px 22px; }
+    .head { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--r-line-soft); }
+    .row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+    .muted { color: var(--r-muted); }
+    .state { margin-left: auto; font-weight: 700; color: var(--r-ink-2); } .state.late { color: var(--r-urgent); }
+    .title { margin: 2px 0 0; font-size: 22px; font-weight: 800; line-height: 1.25; letter-spacing: -.01em; }
+    .meta { color: var(--r-ink-2); font-size: 14px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .sev { color: white; border-radius: 10px; padding: 2px 10px; text-transform: capitalize; }
     .banner { display: flex; flex-direction: row; gap: 12px; padding: 12px; margin-bottom: 16px; background: var(--mat-sys-tertiary-container); }
-    .grow { flex: 1; } .grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; }
+    .grow { flex: 1; } .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; }
+    @container (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
     aside { display: flex; flex-direction: column; gap: 16px; }
     .report { padding: 12px 4px; border-bottom: 1px solid var(--mat-sys-outline-variant); } .report.alert { background: color-mix(in srgb, var(--mat-sys-error) 5%, transparent); }
     .desc { margin-top: 4px; } .crit { color: #b3261e; font-weight: 700; }
@@ -196,6 +206,8 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
 })
 export class CaseDetailPage implements OnDestroy {
   id = input.required<string>();
+  /** Shown beside the queue in the situation room (no back link, in a card) */
+  embedded = input(false);
   api = inject(Api);
   private ui = inject(Ui);
   private callsSvc = inject(Calls);
@@ -276,6 +288,19 @@ export class CaseDetailPage implements OnDestroy {
     if (ch) this.messages.set((await this.api.get<any>(`/channels/${ch}`).catch(() => ({ messages: this.messages() }))).messages);
   }
 
+  sevName(s: string) { return ({ critical: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' } as Record<string, string>)[s] ?? label(s); }
+  private dueAt(c: CaseRow) { return c.status === 'assigned' ? c.ack_due_at : c.due_at; }
+  late(c: CaseRow) { const d = this.dueAt(c); return !!d && !['resolved', 'closed', 'merged'].includes(c.status) && new Date(d) < new Date(); }
+  /** "Yours · due in 18 min", "Waiting · take within 1 min", "Resolved" */
+  stateLine(c: CaseRow) {
+    if (['resolved', 'closed', 'merged'].includes(c.status)) return label(c.status);
+    const who = !c.assigned_to ? 'Waiting' : c.assigned_to === this.me() ? 'Yours' : this.staffName(c.assigned_to);
+    const d = this.dueAt(c);
+    if (!d) return who;
+    const min = Math.round((new Date(d).getTime() - Date.now()) / 60_000);
+    const what = c.status === 'assigned' ? 'acknowledge' : c.assigned_to ? 'due' : 'take';
+    return `${who} · ${min < 0 ? `over by ${minutesText(-min)}` : `${what} within ${minutesText(min)}`}`;
+  }
   catLabel(code: string) { return this.categories()[code] ?? label(code); }
   relatedTitle(id: string) { return this.related()[id] ?? 'case'; }
   staffName(id: string) { return this.staff().find((s) => s.id === id)?.full_name ?? 'System'; }

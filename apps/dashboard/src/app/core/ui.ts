@@ -98,6 +98,13 @@ export { AgoPipe } from './clock';
 
 export const SEVERITY_COLOR: Record<string, string> = { critical: '#b3261e', high: '#c25700', medium: '#8a6d00', low: '#4a6572' };
 
+/** Minutes for people: "45 min", "1 h 05", "3 days" */
+export function minutesText(m: number): string {
+  if (m < 60) return `${m} min`;
+  if (m >= 48 * 60) return `${Math.round(m / 1440)} days`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+}
+
 export function label(s: string | null | undefined): string {
   return (s ?? '').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }

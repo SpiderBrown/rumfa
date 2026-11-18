@@ -140,6 +140,25 @@ describe('API endpoints and webhooks (e2e)', () => {
     expect(d.incidents.find((i: any) => i.client_id === oops)).toMatchObject({ is_sos: false, severity: 'low' });
   });
 
+  it('election day figures on the map: check-ins, turnout, confirmed and counted votes, and an estimate', async () => {
+    const pu = '19-28-02-005';
+    await http.post(api('/quick-tallies')).set(as(AGENT3)).send({ pu: '19-28-02-003', votes: { APC: 40, PDP: 20 }, clientId: uuid() });
+    const [ck] = await ds.query(`insert into public.checkins (tenant_id, election_id, volunteer_id, pu_code) select tenant_id, $2, id, area_code from public.volunteers where id = $1 returning id`, [AGENT3, LIVE]);
+    const d = (await http.get(api('/map')).set(as(SUP)).query({ parent: '19-28-02' }).expect(200)).body;
+    const t = d.totals;
+    expect(t.units).toBe(d.children.reduce((a: number, c: any) => a + c.units, 0));
+    for (const c of d.children) {
+      // A unit counts once: confirmed (EC8A/IReV) or counted (agents' counts), never both
+      expect(Object.keys(c.votes).every((p) => (c.confirmed[p] ?? 0) + (c.counted[p] ?? 0) === c.votes[p])).toBe(true);
+      expect(c.checked_in).toBeGreaterThanOrEqual(0);
+    }
+    const party = Object.keys(t.estimate)[0];
+    if (party) expect(t.estimate[party]).toBeGreaterThanOrEqual((t.confirmed[party] ?? 0) + (t.counted[party] ?? 0));
+    expect(t.checked_in).toBeGreaterThan(0);
+    expect(d.children.find((c: any) => c.code === pu)).toBeDefined();
+    await ds.query(`delete from public.checkins where id = $1`, [ck.id]); // later tests start without check-ins
+  });
+
   it('client B cannot see or touch client A records', async () => {
     await http.get(api(`/cases/${caseId}`)).set(as('adminB')).expect(404);
     expect((await http.get(api('/cases')).set(as('adminB')).expect(200)).body).toEqual([]);

@@ -21,12 +21,9 @@ const NAV: NavGroup[] = [
     { path: '/callbacks', icon: 'phone_callback', text: 'Callback requests' },
     { path: '/contacts', icon: 'contact_phone', text: 'Authority contacts' },
   ] },
+  // One page for the day; its detailed views (check-ins, figures, live count, results, full map) open from it
   { title: 'Election day', items: [
-    { path: '/map', icon: 'map', text: 'Situation map', roles: WATCH },
-    { path: '/polling-day', icon: 'how_to_vote', text: 'Polling day', roles: WATCH },
-    { path: '/checkins', icon: 'where_to_vote', text: 'Check-ins', roles: WATCH },
-    { path: '/live-count', icon: 'ballot', text: 'Live count', roles: WATCH },
-    { path: '/results', icon: 'bar_chart', text: 'Live results', roles: ['analyst', 'supervisor', 'admin', 'legal', 'operator'] },
+    { path: '/election-day', icon: 'how_to_vote', text: 'Election day', roles: WATCH },
   ] },
   { title: 'Results data', items: [
     { path: '/irev', icon: 'cloud_download', text: 'IReV data', roles: ['analyst', 'supervisor', 'admin'], exact: true },

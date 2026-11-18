@@ -9,6 +9,30 @@ import { spreadAround, spreadInside, type Spot } from './approx-places';
 
 /** Open case statuses shown on the map. */
 const OPEN = ['queued', 'assigned', 'in_progress', 'escalated'];
+
+type Votes = Record<string, number>;
+const add = (a: Votes, b: Votes) => { for (const [k, v] of Object.entries(b ?? {})) a[k] = (a[k] ?? 0) + Number(v); return a; };
+/**
+ * Expected final votes per party: what is confirmed (EC8A, IReV) and counted (agents' sorting and live counts)
+ * so far, scaled up from the units that have either to all units. A plain ratio estimate, shown as one.
+ */
+export function estimate(confirmed: Votes, counted: Votes, units: number, known: number): Votes {
+  if (!known || !units) return {};
+  const k = Math.max(1, units / known);
+  return Object.fromEntries(Object.entries(add(add({}, confirmed), counted)).map(([p, v]) => [p, Math.round(v * k)]));
+}
+/** The area as a whole (sums of its sub-areas), with its own estimate */
+function totalsOf(rows: any[]) {
+  const t = { units: 0, registered: 0, reported: 0, ec8a: 0, irev: 0, quick: 0, live: 0, verified: 0, mismatch: 0, open: 0, critical: 0,
+    agents: 0, checked_in: 0, turnout_units: 0, accredited: 0, turnout_registered: 0, confirmed: {} as Votes, counted: {} as Votes, estimate: {} as Votes };
+  for (const r of rows) {
+    for (const f of ['units', 'registered', 'reported', 'ec8a', 'irev', 'quick', 'live', 'verified', 'mismatch', 'open', 'critical', 'agents',
+      'checked_in', 'turnout_units', 'accredited', 'turnout_registered'] as const) t[f] += Number(r[f] ?? 0);
+    add(t.confirmed, r.confirmed); add(t.counted, r.counted);
+  }
+  t.estimate = estimate(t.confirmed, t.counted, t.units, t.reported);
+  return t;
+}
 const LEVEL_OF_LEN: Record<number, string> = { 2: 'state', 5: 'lga', 8: 'ward', 12: 'pu' };
 /** Geopolitical zones (states.zone); on the map as Z-NC etc. */
 export const ZONES: Record<string, string> = {
@@ -107,9 +131,25 @@ export class MapController {
                 count(*) filter (where src = 'quick')::int as quick, count(*) filter (where src = 'live')::int as live
            from best group by 1),
        votes as (
-         select k, jsonb_object_agg(party, n) as votes from (
-           select ${key('b.pu')} as k, v.key as party, sum(v.value::int)::int as n
+         select k, jsonb_object_agg(party, n) as votes, jsonb_object_agg(party, c) as confirmed, jsonb_object_agg(party, q) as counted from (
+           select ${key('b.pu')} as k, v.key as party, sum(v.value::int)::int as n,
+                  coalesce(sum(v.value::int) filter (where b.src in ('ec8a', 'irev')), 0)::int as c,
+                  coalesce(sum(v.value::int) filter (where b.src in ('quick', 'live')), 0)::int as q
              from best b, jsonb_each_text(b.votes) v group by 1, 2) t group by k),
+       -- Election day: agents in place, and turnout from the accredited figures agents send through the day
+       checked as (
+         select ${key('pu_code')} as k, count(distinct pu_code)::int as n from public.checkins
+          where tenant_id = $1 and election_id = $2 and pu_code like $3 group by 1),
+       figs as (
+         select pu_code,
+                (array_agg((figures->>'accredited')::int order by reported_at desc) filter (where figures ? 'accredited'))[1] as accredited,
+                (array_agg((figures->>'registered')::int order by reported_at desc) filter (where figures ? 'registered'))[1] as registered
+           from public.unit_figure_updates where tenant_id = $1 and election_id = $2 and pu_code like $3 group by 1),
+       turnout as (
+         select ${key('f.pu_code')} as k, count(*)::int as units, sum(f.accredited)::int as accredited,
+                sum(coalesce(f.registered, pu.registered_voters))::int as registered
+           from figs f join public.polling_units pu on pu.code = f.pu_code
+          where f.accredited is not null and coalesce(f.registered, pu.registered_voters) > 0 group by 1),
        verified as (
          select ${key('pu_code')} as k, count(*) filter (where status = 'verified')::int as verified,
                 count(*) filter (where status = 'mismatch')::int as mismatch
@@ -134,7 +174,9 @@ export class MapController {
               coalesce(un.units, 0) as units, coalesce(un.registered, pu.registered_voters, 0) as registered,
               coalesce(r.n, 0) as reported, coalesce(r.ec8a, 0) as ec8a, coalesce(r.irev, 0) as irev, coalesce(r.quick, 0) as quick, coalesce(r.live, 0) as live,
               coalesce(vf.verified, 0) as verified, coalesce(vf.mismatch, 0) as mismatch,
-              coalesce(vo.votes, '{}'::jsonb) as votes,
+              coalesce(vo.votes, '{}'::jsonb) as votes, coalesce(vo.confirmed, '{}'::jsonb) as confirmed, coalesce(vo.counted, '{}'::jsonb) as counted,
+              coalesce(ck.n, 0) as checked_in, coalesce(tu.units, 0) as turnout_units, coalesce(tu.accredited, 0) as accredited,
+              coalesce(tu.registered, 0) as turnout_registered,
               coalesce(i.open, 0) as open, coalesce(i.critical, 0) as critical, coalesce(i.high, 0) as high,
               coalesce(i.medium, 0) as medium, coalesce(i.low, 0) as low, coalesce(i.escalated, 0) as escalated,
               coalesce(p.agents, 0) as agents, p.coordinator
@@ -145,6 +187,8 @@ export class MapController {
          left join units un on un.k = kids.code
          left join reported r on r.k = kids.code
          left join votes vo on vo.k = kids.code
+         left join checked ck on ck.k = kids.code
+         left join turnout tu on tu.k = kids.code
          left join verified vf on vf.k = kids.code
          left join issues i on i.k = kids.code
          left join people p on p.k = kids.code
@@ -183,7 +227,9 @@ export class MapController {
       center: shape ? { lat: shape.center_lat, lng: shape.center_lng } : approxArea ? { lat: approxArea.lat, lng: approxArea.lng } : null,
       approxArea,
       areaWide: wide ?? { open: 0, critical: 0 },
-      children: rows.map((r) => ({ ...r, approx: !!r.approx, radius_m: r.radius_m ?? null, leader: leader(r.votes) })),
+      children: rows.map((r) => ({ ...r, approx: !!r.approx, radius_m: r.radius_m ?? null, leader: leader(r.votes),
+        estimate: estimate(r.confirmed, r.counted, r.units, r.reported) })),
+      totals: totalsOf(rows),
     };
   }
 

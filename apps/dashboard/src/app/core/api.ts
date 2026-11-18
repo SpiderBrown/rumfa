@@ -41,9 +41,13 @@ export class Api {
   readonly liveElectionId = signal<string | null>(null);
   readonly baselineElectionId = signal<string | null>(null);
   readonly parties = signal<string[]>([]);
+  /** Party colours from Rumfa Console's Parties page */
+  readonly partyColours = signal<Record<string, string>>({});
   readonly categories = signal<{ code: string; label: string; severity: string; queue_kind: string }[]>([]);
   readonly staffStatus = signal<string | null>(null);
   /** Calling options the organisation allows (dashboard → Settings). */
+  /** Premium add-ons Rumfa has switched on for this organisation (Rumfa Console) */
+  readonly addons = signal<{ voice: boolean; airtime: boolean }>({ voice: false, airtime: false });
   readonly callOptions = signal<{ phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }>({ phone: true, bridged: true, webrtc: false, inapp: false });
 
   readonly isSupervisor = computed(() => ['supervisor', 'admin'].includes(this.me()?.role ?? ''));
@@ -70,25 +74,27 @@ export class Api {
     this.liveElectionId.set(ctx.elections.live);
     this.baselineElectionId.set(ctx.elections.baseline);
     this.parties.set(ctx.parties);
+    this.partyColours.set(ctx.partyColours ?? {});
     this.categories.set(ctx.categories);
     this.staffStatus.set(ctx.staffStatus);
     if (ctx.calls) this.callOptions.set(ctx.calls);
+    this.addons.set(ctx.addons ?? { voice: false, airtime: false });
     this.connectLive();
   }
 
   // ---- Sign-in ------------------------------------------------------------------------------------
-  /** Email + password. Returns the next step: done, an authenticator code, or authenticator set-up. */
-  async login(email: string, password: string): Promise<{ step: 'done' } | { step: 'mfa'; token: string } | { step: 'setup'; token: string }> {
-    const r = await this.post<any>('/auth/login', { email, password, tenantId: this.config.tenantId }, false);
-    if (r.mfaRequired) return { step: 'mfa', token: r.mfaToken };
-    if (r.mfaSetupRequired) return { step: 'setup', token: r.setupToken };
-    await this.start(r.session);
-    return { step: 'done' };
+  /** Email + password (Rumfa owners and staff open this site's client as support). */
+  async login(email: string, password: string) {
+    await this.start((await this.post<any>('/auth/login', { email, password, tenantId: this.config.tenantId }, false)).session);
   }
-  async mfa(mfaToken: string, code: string) { await this.start((await this.post<any>('/auth/mfa', { mfaToken, code }, false)).session); }
-  totpSetup(setupToken: string) { return this.post<{ secret: string; otpauthUrl: string }>('/auth/totp/setup', { setupToken }, false); }
-  async totpEnable(setupToken: string, code: string) { await this.start((await this.post<any>('/auth/totp/enable', { setupToken, code }, false)).session); }
   acceptInvite(token: string, password: string) { return this.post<{ email: string; existingAccount: boolean }>('/auth/invite/accept', { token, password }, false); }
+  /** "Open dashboard as admin" from Rumfa Console: the one-time ticket from the address signs in as Rumfa support. */
+  async supportTicket(ticket: string) {
+    if (this.session) await this.signOut();
+    await this.start((await this.post<any>('/auth/support/ticket', { ticket }, false)).session);
+  }
+  /** Signed in as Rumfa support (not one of the client's own people). */
+  readonly isSupport = computed(() => (this.me()?.full_name ?? '').startsWith('Rumfa support'));
 
   private async start(s: Session) {
     this.save(s);

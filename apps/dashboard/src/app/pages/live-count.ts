@@ -116,7 +116,7 @@ export class LiveCountPage implements OnDestroy {
 
   open(code: string) { this.area = code; void this.load(); }
   level(l: string) { return LEVEL_NAME[l] ?? l; }
-  colour(p: string) { return partyColour(p, this.s()?.parties ?? []); }
+  colour(p: string) { return partyColour(p, this.s()?.parties ?? [], this.api.partyColours()); }
 
   shares(a: Agg) {
     const total = Object.values(a.votes).reduce((x, y) => x + y, 0);

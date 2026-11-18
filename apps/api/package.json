@@ -19,7 +19,8 @@
     "import:liaison": "node --env-file-if-exists=.env dist/scripts/import-liaison-contacts",
     "import:people": "node --env-file-if-exists=.env dist/scripts/import-people",
     "build:sample": "node --env-file-if-exists=.env dist/scripts/build-sample",
-    "import:boundaries": "node --env-file-if-exists=.env dist/scripts/import-boundaries"
+    "import:boundaries": "node --env-file-if-exists=.env dist/scripts/import-boundaries",
+    "platform:owner": "node --env-file-if-exists=.env dist/scripts/platform-owner"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.10",

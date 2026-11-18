@@ -45,7 +45,7 @@ export class PeopleController {
        @Query('q') search?: string, @Query('areas') areas?: string) {
     return this.db.asUser(user, (q) => q(
       `select ${COLS} from public.volunteers
-        where tenant_id = $1 and status <> 'removed'
+        where tenant_id = $1 and status <> 'removed' and platform_staff_id is null
           and ($2::text is null or area_code like $2 || '%')
           and ($3::text is null or role = any(string_to_array($3, ',')))
           and ($4::text is null or status = $4)

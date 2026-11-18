@@ -8,10 +8,12 @@
     "test:db": "db/tests/run.sh",
     "test:api": "cd apps/api && npm test && npm run test:e2e",
     "sync:shared": "scripts/sync-shared.sh",
-    "build": "npm run sync:shared && (cd apps/api && npm run build) && (cd apps/dashboard && npm run build) && (cd apps/agent && npm run build)",
+    "build": "npm run sync:shared && (cd apps/api && npm run build) && (cd apps/dashboard && npm run build) && (cd apps/agent && npm run build) && (cd apps/console && npm run build)",
     "start:api": "cd apps/api && npm run start:dev",
     "start:worker": "cd apps/api && npm run start:worker",
     "start:dashboard": "cd apps/dashboard && npm start",
-    "start:agent": "cd apps/agent && npm start"
+    "start:agent": "cd apps/agent && npm start",
+    "platform:owner": "cd apps/api && npm run build && npm run platform:owner --",
+    "start:console": "cd apps/console && npm start"
   }
 }

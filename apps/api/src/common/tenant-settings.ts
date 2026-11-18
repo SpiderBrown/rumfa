@@ -50,3 +50,15 @@ export function checkinSettings(settings: any): CheckinSettings {
 export function ownParty(settings: any): string | null {
   return typeof settings?.party === 'string' && /^[A-Z]{1,8}$/.test(settings.party) ? settings.party : null;
 }
+
+/**
+ * Premium add-ons, switched on per client in Rumfa Console (tenants.settings.addons). Off unless switched on.
+ *  - voice:   Voice outreach (recorded messages called out to supporters)
+ *  - airtime: Airtime and data top-ups for field people
+ */
+export type Addon = 'voice' | 'airtime';
+export const ADDONS: Record<Addon, string> = { voice: 'Voice outreach', airtime: 'Airtime and data' };
+export function addonSettings(settings: any): Record<Addon, boolean> {
+  const a = settings?.addons ?? {};
+  return { voice: a.voice === true, airtime: a.airtime === true };
+}

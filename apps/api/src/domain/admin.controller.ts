@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
-import { CurrentUser, Roles } from '../auth/decorators';
+import { Addon, CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn } from '../common/fn';
@@ -76,6 +76,7 @@ class ApproveDto { @ApiProperty() @IsBoolean() approve: boolean; }
 @ApiBearerAuth()
 @Controller('topups')
 @Roles('admin')
+@Addon('airtime')
 export class TopupsController {
   constructor(private readonly db: Db) {}
 
@@ -139,6 +140,7 @@ class CampaignStatusDto { @ApiProperty({ enum: ['approved', 'running', 'paused',
 @ApiBearerAuth()
 @Controller('voice')
 @Roles('voice_ops', 'admin')
+@Addon('voice')
 export class VoiceController {
   constructor(private readonly db: Db) {}
 

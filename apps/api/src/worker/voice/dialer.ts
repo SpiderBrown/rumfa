@@ -36,7 +36,9 @@ export async function dialCampaigns(): Promise<number> {
     return 0;
   }
   const today = new Date(Date.now() + 3600_000).toISOString().slice(0, 10);
-  const camps = await q(`select * from public.voice_campaigns where status = 'running' and starts_on <= $1 and ends_on >= $1`, [today]);
+  // Only clients with the Voice outreach add-on switched on
+  const camps = await q(`select c.* from public.voice_campaigns c join public.tenants t on t.id = c.tenant_id
+                          where c.status = 'running' and c.starts_on <= $1 and c.ends_on >= $1 and t.settings->'addons'->>'voice' = 'true'`, [today]);
   const nowMin = lagosMinutes();
   let placed = 0;
   for (const c of camps) {

@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import { Db } from '../database/db.service';
 import type { AppConfig } from '../config/configuration';
-import type { AuthUser, Membership, TokenType } from './auth.types';
+import type { AuthUser, Membership, PlatformUser, TokenType } from './auth.types';
 import { keyedHash, randomToken } from './crypto';
 
 export interface Session {
@@ -42,6 +42,47 @@ export class TokensService {
     return { sub, tid, mid, role, level, area, dev };
   }
 
+  verifyPlatform(token: string): PlatformUser {
+    const { sub, sid, role } = this.verify(token, 'platform');
+    return { sub, sid, role };
+  }
+
+  /** A Rumfa Console session: short access token, rotating refresh token (same rules as client sessions). */
+  async issuePlatform(u: PlatformUser, family = randomUUID()): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+    const refresh = randomToken();
+    await this.db.system(
+      `insert into public.platform_refresh_tokens (family, staff_id, token_hash, expires_at) values ($1, $2, $3, now() + interval '12 hours')`,
+      [family, u.sid, keyedHash(this.cfg.jwtSecret, `platform:${refresh}`)]);
+    await this.db.system(`update public.identities set last_login_at = now() where id = $1`, [u.sub]);
+    return { accessToken: this.sign('platform', u, this.cfg.accessTtlSeconds), refreshToken: refresh, expiresIn: this.cfg.accessTtlSeconds };
+  }
+
+  async refreshPlatform(refreshToken: string) {
+    const hash = keyedHash(this.cfg.jwtSecret, `platform:${refreshToken}`);
+    const r = await this.db.systemTx(async (q) => {
+      const [rt] = await q(
+        `select r.*, s.identity_id, s.role, s.status from public.platform_refresh_tokens r join public.platform_staff s on s.id = r.staff_id
+          where r.token_hash = $1 for update of r`, [hash]);
+      if (!rt) throw new UnauthorizedException('Session expired; sign in again');
+      if (rt.used_at) {
+        await q(`update public.platform_refresh_tokens set revoked_at = now() where family = $1 and revoked_at is null`, [rt.family]);
+        return { reused: true } as const;
+      }
+      if (rt.revoked_at || new Date(rt.expires_at) < new Date() || rt.status !== 'active') throw new UnauthorizedException('Session expired; sign in again');
+      await q(`update public.platform_refresh_tokens set used_at = now() where id = $1`, [rt.id]);
+      return { rt };
+    });
+    if ('reused' in r) throw new UnauthorizedException('Session ended for safety; sign in again');
+    return this.issuePlatform({ sub: r.rt.identity_id, sid: r.rt.staff_id, role: r.rt.role }, r.rt.family);
+  }
+
+  async revokePlatform(refreshToken: string) {
+    await this.db.system(
+      `update public.platform_refresh_tokens set revoked_at = now()
+        where family = (select family from public.platform_refresh_tokens where token_hash = $1) and revoked_at is null`,
+      [keyedHash(this.cfg.jwtSecret, `platform:${refreshToken}`)]);
+  }
+
   /** Expiry (seconds since epoch) of a token that has already been verified. */
   expiryOf(token: string): number | undefined {
     return (this.jwt.decode(token) as any)?.exp;
@@ -50,6 +91,10 @@ export class TokensService {
   /** Short-lived token for a step between sign-in and a session: choosing a client, or the authenticator code. */
   signStep(typ: Exclude<TokenType, 'access'>, payload: object): string {
     return this.sign(typ, payload, 300);
+  }
+  /** The kind of a step token, read without checking it (it is checked when used). */
+  stepType(token: string): string | undefined {
+    return (this.jwt.decode(token) as any)?.typ;
   }
   verifyStep(token: string, typ: Exclude<TokenType, 'access'>): any {
     return this.verify(token, typ);

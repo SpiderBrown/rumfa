@@ -49,7 +49,7 @@ import { AgoPipe, Ui, label } from '../core/ui';
     <ng-container matColumnDef="area"><th mat-header-cell *matHeaderCellDef>Area</th>
       <td mat-cell *matCellDef="let k">{{ k.level }} {{ k.area_code }}</td></ng-container>
     <ng-container matColumnDef="source"><th mat-header-cell *matHeaderCellDef>Source</th>
-      <td mat-cell *matCellDef="let k"><span class="src" [class]="k.source_type">{{ label(k.source_type) }}</span>
+      <td mat-cell *matCellDef="let k"><span class="src" [class]="k.source_type" [matTooltip]="k.tenant_id ? '' : 'Added by Rumfa for every organisation'">{{ k.tenant_id ? label(k.source_type) : 'Official (Rumfa)' }}</span>
         @if (k.source_url) { <a [href]="k.source_url" target="_blank" rel="noopener" class="sub">source</a> }</td></ng-container>
     <ng-container matColumnDef="status"><th mat-header-cell *matHeaderCellDef>Status</th>
       <td mat-cell *matCellDef="let k">{{ label(k.status) }}

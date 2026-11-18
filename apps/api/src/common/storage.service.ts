@@ -6,7 +6,7 @@ import { dirname, join, normalize, resolve } from 'node:path';
 import type { AppConfig } from '../config/configuration';
 import { safeEqual } from '../auth/crypto';
 
-export const BUCKETS = ['ec8a', 'incident-media', 'voice-notes', 'chat-media', 'live-clips', 'irev', 'voice-recordings', 'contact-imports'] as const;
+export const BUCKETS = ['ec8a', 'incident-media', 'voice-notes', 'chat-media', 'live-clips', 'irev', 'voice-recordings', 'contact-imports', 'party-logos'] as const;
 export type Bucket = (typeof BUCKETS)[number];
 
 /**

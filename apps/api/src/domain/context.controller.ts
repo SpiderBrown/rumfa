@@ -6,7 +6,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn, elections } from '../common/fn';
 import { ROOM } from './roles';
-import { callSettings, ownParty, tenantSettings } from '../common/tenant-settings';
+import { addonSettings, callSettings, ownParty, tenantSettings } from '../common/tenant-settings';
 
 class OnboardingDto {
   @ApiProperty({ enum: ['mtn', 'airtel', 'glo', '9mobile'] }) @IsIn(['mtn', 'airtel', 'glo', '9mobile']) network: string;
@@ -59,11 +59,14 @@ export class ContextController {
       const parties = el.live ? (await q(`select party from public.election_parties where election_id = $1 order by ballot_order`, [el.live])).map((p) => p.party) : [];
       const categories = await q(`select code, sms, label, severity, queue_kind, related, is_alert from public.incident_categories order by label`);
       const [status] = ROOM.includes(user.role) ? await q(`select status from public.staff_status where volunteer_id = $1`, [user.mid]) : [];
-      return { me, elections: el, parties, categories, staffStatus: status?.status ?? null };
+      // Colours set on Rumfa Console's Parties page (others get an automatic colour)
+      const colours = await q(`select acronym, colour from public.parties where colour is not null`);
+      const partyColours = Object.fromEntries(colours.map((c) => [c.acronym, c.colour]));
+      return { me, elections: el, parties, partyColours, categories, staffStatus: status?.status ?? null };
     }).then(async (ctx) => {
       const settings = await tenantSettings(this.db, user.tid);
       const own = ownParty(settings);
-      return { ...ctx, calls: callSettings(settings), ownParty: own && ctx.parties.includes(own) ? own : null };
+      return { ...ctx, calls: callSettings(settings), addons: addonSettings(settings), ownParty: own && ctx.parties.includes(own) ? own : null };
     });
   }
 

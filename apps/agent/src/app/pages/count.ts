@@ -121,7 +121,7 @@ export default class CountPage {
 
   constructor() { void this.lc.open(); }
 
-  colour(p: string) { return partyColour(p, this.parties()); }
+  colour(p: string) { return partyColour(p, this.parties(), this.api.partyColours()); }
   logo(p: string) { return this.missingLogos().has(p) ? '' : this.api.partyLogo(p); }
   noLogo(p: string) { this.missingLogos.update((m) => new Set(m).add(p)); }
 

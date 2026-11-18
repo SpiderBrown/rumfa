@@ -6,8 +6,8 @@ import { CurrentUser, Public, Roles } from './decorators';
 import type { AuthUser } from './auth.types';
 import { TokensService } from './tokens.service';
 import {
-  AcceptInviteDto, ActivationRequestDto, ActivationVerifyDto, MfaDto, PinLoginDto, RefreshDto, SelectTenantDto,
-  StaffLoginDto, SwitchTenantDto, TotpCodeDto, TotpEnableDto, TotpSetupDto,
+  AcceptInviteDto, ActivationRequestDto, ActivationVerifyDto, PinLoginDto, RefreshDto, SelectTenantDto,
+  StaffLoginDto, SupportTicketDto, SwitchTenantDto,
 } from './dto';
 
 @ApiTags('Sign-in')
@@ -62,32 +62,10 @@ export class AuthController {
     return this.auth.staffLogin(dto, ip);
   }
 
-  @Public() @Post('mfa') @HttpCode(200)
-  @ApiOperation({ summary: 'Second step: authenticator code' })
-  mfa(@Body() dto: MfaDto) {
-    return this.auth.mfa(dto.mfaToken, dto.code);
-  }
-
-  @Public() @Post('totp/setup') @HttpCode(200)
-  @ApiOperation({ summary: 'First sign-in of a role that needs an authenticator: get the secret / QR link' })
-  totpSetup(@Body() dto: TotpSetupDto) {
-    return this.auth.totpSetupWithToken(dto.setupToken);
-  }
-
-  @Public() @Post('totp/enable') @HttpCode(200)
-  totpEnable(@Body() dto: TotpEnableDto) {
-    return this.auth.totpEnableWithToken(dto.setupToken, dto.code);
-  }
-
-  @ApiBearerAuth() @Post('me/totp/setup') @HttpCode(200)
-  @ApiOperation({ summary: 'Optional: add an authenticator to your account' })
-  myTotpSetup(@CurrentUser() user: AuthUser) {
-    return this.auth.totpSetup(user.sub);
-  }
-
-  @ApiBearerAuth() @Post('me/totp/enable') @HttpCode(204)
-  async myTotpEnable(@CurrentUser() user: AuthUser, @Body() dto: TotpCodeDto) {
-    await this.auth.totpEnable(user.sub, dto.code);
+  @Public() @Post('support/ticket') @HttpCode(200)
+  @ApiOperation({ summary: 'Rumfa Console "Open dashboard as admin": swap the one-time ticket for a support session' })
+  supportTicket(@Body() dto: SupportTicketDto, @Ip() ip: string) {
+    return this.auth.supportTicket(dto.ticket, ip);
   }
 
   @Public() @Post('invite/accept') @HttpCode(200)

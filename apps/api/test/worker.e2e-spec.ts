@@ -66,6 +66,7 @@ describe('Worker jobs on the database (e2e, providers faked)', () => {
   });
 
   it('top-ups: an approved batch is sent once, confirmed people get an SMS', async () => {
+    await ds.query(`update public.tenants set settings = coalesce(settings, '{}') || '{"addons":{"airtime":true}}' where id = $1`, [T_A]);
     const [plan] = await ds.query(`insert into public.topup_plans (tenant_id, name, kind, amount_ngn, target_roles, created_by)
                                    values ($1, 'Day airtime', 'airtime', 200, '{agent}', 'b0000000-0000-4000-8000-000000000001') returning id`, [T_A]);
     const [b] = await ds.query(`insert into public.topup_batches (tenant_id, plan_id, status, created_by) values ($1, $2, 'approved', 'b0000000-0000-4000-8000-000000000001') returning id`, [T_A, plan.id]);

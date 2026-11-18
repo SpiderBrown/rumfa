@@ -1,7 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { totpAt } from '../src/auth/crypto';
 import { createTestApp } from './setup';
 
 const TENANT_A = 'a1a1a1a1-0000-4000-8000-000000000001';
@@ -129,18 +128,11 @@ describe('Sign-in and tenant isolation (e2e)', () => {
     const adminInvite = await auth.inviteStaff(adminUser, ADMIN1);
     await http.post(api('/auth/invite/accept')).send({ token: adminInvite.inviteToken, password: 'correct horse battery' }).expect(200);
 
-    // Admin role requires an authenticator: first sign-in sets it up
+    // Email and password only (no authenticator step), whatever the role
     const l1 = await http.post(api('/auth/login')).send({ email: 'Admin1@example.org', password: 'correct horse battery', tenantId: TENANT_A }).expect(200);
-    expect(l1.body.mfaSetupRequired).toBe(true);
-    const setup = await http.post(api('/auth/totp/setup')).send({ setupToken: l1.body.setupToken }).expect(200);
-    const s1 = await http.post(api('/auth/totp/enable')).send({ setupToken: l1.body.setupToken, code: totpAt(setup.body.secret, Date.now()) }).expect(200);
-    const admin = s1.body.session;
+    const admin = l1.body.session;
     expect(admin.membership.role).toBe('admin');
-
-    // Next sign-in asks for the code
-    const l2 = await http.post(api('/auth/login')).send({ email: 'admin1@example.org', password: 'correct horse battery', tenantId: TENANT_A }).expect(200);
-    await http.post(api('/auth/mfa')).send({ mfaToken: l2.body.mfaToken, code: '000000' }).expect(401);
-    await http.post(api('/auth/mfa')).send({ mfaToken: l2.body.mfaToken, code: totpAt(setup.body.secret, Date.now()) }).expect(200);
+    await http.post(api('/auth/login')).send({ email: 'admin1@example.org', password: 'wrong horse battery', tenantId: TENANT_A }).expect(401);
 
     // Admin invites an operator; operators need no authenticator by default
     const inv = await http.post(api(`/people/${OP_EN}/invite`)).set('Authorization', `Bearer ${admin.accessToken}`).expect(201);

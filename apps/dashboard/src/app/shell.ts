@@ -11,7 +11,7 @@ import { Api } from './core/api';
 import { Calls } from './core/calls';
 import { Ui, label } from './core/ui';
 
-interface NavItem { path: string; icon: string; text: string; roles?: string[] }
+interface NavItem { path: string; icon: string; text: string; roles?: string[]; addon?: 'voice' | 'airtime' }
 
 const NAV: NavItem[] = [
   { path: '/room', icon: 'support_agent', text: 'Situation room' },
@@ -26,8 +26,8 @@ const NAV: NavItem[] = [
   { path: '/contacts', icon: 'contact_phone', text: 'Authority contacts' },
   { path: '/people', icon: 'groups', text: 'People' },
   { path: '/shifts', icon: 'schedule', text: 'Shifts and queues', roles: ['supervisor', 'admin'] },
-  { path: '/topups', icon: 'sim_card', text: 'Airtime and data', roles: ['admin'] },
-  { path: '/voice', icon: 'campaign', text: 'Voice outreach', roles: ['voice_ops', 'admin'] },
+  { path: '/topups', icon: 'sim_card', text: 'Airtime and data', roles: ['admin'], addon: 'airtime' },
+  { path: '/voice', icon: 'campaign', text: 'Voice outreach', roles: ['voice_ops', 'admin'], addon: 'voice' },
   { path: '/settings', icon: 'settings', text: 'Settings', roles: ['admin'] },
 ];
 
@@ -49,6 +49,7 @@ const NAV: NavItem[] = [
     </mat-sidenav>
     <mat-sidenav-content>
       <mat-toolbar class="top">
+        @if (api.isSupport()) { <span class="support" title="Signed in from Rumfa Console to help this client. Sign out to open another client.">Rumfa support access</span> }
         <span class="who">{{ api.me()?.full_name }} · {{ label(api.me()?.role) }} · {{ api.me()?.area_code }}</span>
         <span class="spacer"></span>
         @if (calls.active(); as c) {
@@ -85,6 +86,7 @@ const NAV: NavItem[] = [
   styles: `
     .shell { height: 100vh; }
     .nav { width: 232px; border-right: 1px solid var(--mat-sys-outline-variant); }
+    .support { background: #fff1e0; border: 1px solid #fb923c; color: #7a3d00; border-radius: 12px; padding: 2px 10px; font-size: 12px; margin-right: 8px; }
     .brand { display: flex; gap: 8px; align-items: center; padding: 16px; font: var(--mat-sys-title-large); color: var(--mat-sys-primary); }
     .active { background: var(--mat-sys-secondary-container); }
     .top { position: sticky; top: 0; z-index: 2; gap: 12px; background: var(--mat-sys-surface-container); font: var(--mat-sys-body-medium); }
@@ -102,7 +104,8 @@ export class Shell {
   private router = inject(Router);
   label = label;
   status = signal('offline');
-  nav = computed(() => NAV.filter((n) => !n.roles || n.roles.includes(this.api.me()?.role ?? '')));
+  // Premium add-ons (voice, airtime) show only when Rumfa has switched them on for the organisation
+  nav = computed(() => NAV.filter((n) => (!n.roles || n.roles.includes(this.api.me()?.role ?? '')) && (!n.addon || this.api.addons()[n.addon])));
 
   private stopCalls: () => void;
 

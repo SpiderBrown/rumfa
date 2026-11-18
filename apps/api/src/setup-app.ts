@@ -8,6 +8,8 @@ import helmet from 'helmet';
 export function setupApp(app: INestApplication): void {
   const config = app.get(ConfigService);
   (app as NestExpressApplication).set('trust proxy', 1);
+  // Party logos (up to 2 MB) and voter CSVs from Rumfa Console are bigger than the default 100 KB
+  (app as NestExpressApplication).useBodyParser('json', { limit: '10mb' });
   app.use(helmet({ contentSecurityPolicy: false }));
   const origins = config.get<string[]>('corsOrigins')!;
   app.enableCors({ origin: origins.includes('*') ? true : origins, credentials: false });

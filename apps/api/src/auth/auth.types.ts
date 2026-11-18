@@ -9,7 +9,15 @@ export interface AuthUser {
   dev?: string; // auth_devices.id for field users
 }
 
-export type TokenType = 'access' | 'select' | 'mfa' | 'mfa_setup';
+export type TokenType = 'access' | 'select' | 'platform';
+
+/** A Rumfa staff member signed in to the console (belongs to no client). */
+export interface PlatformUser {
+  sub: string; // identities.id
+  sid: string; // platform_staff.id
+  role: 'owner' | 'staff' | 'support';
+}
+export const PLATFORM_ROLES = ['owner', 'staff', 'support'] as const;
 
 export interface Membership {
   mid: string;
@@ -27,14 +35,11 @@ export const STAFF_ROLES = ['operator', 'supervisor', 'analyst', 'legal', 'secur
 export interface TenantAuthSettings {
   /** Ways a field user may activate a device */
   activation: ('sms' | 'whatsapp' | 'code')[];
-  /** Staff roles that must use an authenticator code */
-  mfaRoles: string[];
 }
 
 export function tenantAuthSettings(settings: any): TenantAuthSettings {
   const a = settings?.auth ?? {};
   return {
     activation: Array.isArray(a.activation) && a.activation.length ? a.activation : ['sms', 'whatsapp', 'code'],
-    mfaRoles: Array.isArray(a.mfa_roles) ? a.mfa_roles : ['supervisor', 'admin'],
   };
 }

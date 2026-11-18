@@ -5,9 +5,10 @@ import { normaliseNgPhone } from '../shared';
 import { Db } from '../database/db.service';
 import type { AppConfig } from '../config/configuration';
 import { FIELD_ROLES, STAFF_ROLES, tenantAuthSettings, type AuthUser, type Membership } from './auth.types';
-import { activationCode, keyedHash, newTotpSecret, normaliseActivationCode, numericCode, randomToken, safeEqual, verifyTotp, weakPin } from './crypto';
+import { activationCode, keyedHash, normaliseActivationCode, numericCode, randomToken, safeEqual, weakPin } from './crypto';
 import { OtpSender } from './otp-sender.service';
 import { MEMBERSHIP_SQL, TokensService, type Session } from './tokens.service';
+import { staffArea } from '../platform/seats';
 
 export type SignInResult =
   | { session: Session; memberships: Membership[] }
@@ -162,59 +163,69 @@ export class AuthService {
     return this.signIn(user.sub, user.dev, tenantId);
   }
 
-  // ---- Dashboard staff: email + password (+ authenticator) ----------------------------------------
+  // ---- Dashboard staff: email + password ------------------------------------------------------------
 
   async staffLogin(dto: { email: string; password: string; tenantId: string }, ip: string) {
     const email = dto.email.trim().toLowerCase();
     await this.limit(`login:ip:${ip}`, 60, '1 hour');
     await this.limit(`login:email:${email}`, 10, '15 minutes');
-    const [idn] = await this.db.system(
-      `select id, password_hash, status, totp_enabled_at from public.identities where lower(email) = $1`, [email]);
+    const [idn] = await this.db.system(`select id, password_hash, status from public.identities where lower(email) = $1`, [email]);
     const ok = await bcrypt.compare(dto.password, idn?.password_hash ?? DUMMY_HASH);
     if (!idn?.password_hash || !ok || idn.status !== 'active') throw new UnauthorizedException('Wrong email or password');
-    const [m] = await this.db.system<Membership & { settings: any }>(
-      MEMBERSHIP_SQL.replace('v.area_code as area', 'v.area_code as area, t.settings') + ` and v.tenant_id = $2`, [idn.id, dto.tenantId]);
+    // Rumfa owners and staff: on a client's dashboard their console account opens that client as an admin (support access)
+    const [ps] = await this.db.system(`select id, role from public.platform_staff where identity_id = $1 and status = 'active'`, [idn.id]);
+    if (ps && ['owner', 'staff'].includes(ps.role)) {
+      const [own] = await this.db.system(`select 1 from public.volunteers where tenant_id = $1 and user_id = $2 and platform_staff_id is null and status = 'active'`, [dto.tenantId, idn.id]);
+      if (!own) return { session: await this.enterAsSupport(idn.id, ps.id, dto.tenantId, 'dashboard sign-in') };
+    }
+    const [m] = await this.db.system<Membership>(MEMBERSHIP_SQL + ` and v.tenant_id = $2`, [idn.id, dto.tenantId]);
     if (!m || !STAFF_ROLES.includes(m.role)) throw new ForbiddenException('You do not have access to this dashboard');
-    const required = tenantAuthSettings(m.settings).mfaRoles.includes(m.role);
-    if (idn.totp_enabled_at) return { mfaRequired: true, mfaToken: this.tokens.signStep('mfa', { sub: idn.id, mid: m.mid }) };
-    if (required) return { mfaSetupRequired: true, setupToken: this.tokens.signStep('mfa_setup', { sub: idn.id, mid: m.mid }) };
     return { session: await this.tokens.issue(idn.id, strip(m), null) };
   }
 
-  async mfa(mfaToken: string, code: string) {
-    const { sub, mid } = this.tokens.verifyStep(mfaToken, 'mfa');
-    await this.limit(`mfa:${sub}`, 10, '15 minutes');
-    const [idn] = await this.db.system(`select totp_secret from public.identities where id = $1 and totp_enabled_at is not null`, [sub]);
-    if (!idn || !verifyTotp(idn.totp_secret, code)) throw new UnauthorizedException('Wrong authenticator code');
-    return { session: await this.issueFor(sub, mid) };
+  // ---- Rumfa support access: owners and staff open any client as an admin ----------------------------
+
+  /** "Open dashboard as admin" from Rumfa Console: swaps a one-time ticket (2 minutes, single use) for a support session. */
+  async supportTicket(ticket: string, ip: string) {
+    await this.limit(`ticket:ip:${ip}`, 30, '15 minutes');
+    const [t] = await this.db.system(
+      `update public.platform_support_tickets k set used_at = now()
+         from public.platform_staff s
+        where k.token_hash = $1 and k.used_at is null and k.expires_at > now() and s.id = k.staff_id
+        returning k.staff_id, k.tenant_id, s.identity_id`, [keyedHash(this.cfg.jwtSecret, `support:${ticket}`)]);
+    if (!t?.identity_id) throw new UnauthorizedException('This link has expired. Open the client again from Rumfa Console.');
+    return { session: await this.enterAsSupport(t.identity_id, t.staff_id, t.tenant_id, 'console') };
   }
 
-  async totpSetup(identityId: string) {
-    const [idn] = await this.db.system(`select email, totp_enabled_at from public.identities where id = $1`, [identityId]);
-    if (!idn) throw new NotFoundException();
-    if (idn.totp_enabled_at) throw new ConflictException('An authenticator is already set up');
-    const secret = newTotpSecret();
-    await this.db.system(`update public.identities set totp_secret = $2 where id = $1`, [identityId, secret]);
-    const label = encodeURIComponent(`${this.cfg.totpIssuer}:${idn.email ?? 'account'}`);
-    return { secret, otpauthUrl: `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(this.cfg.totpIssuer)}&digits=6&period=30` };
-  }
-
-  async totpEnable(identityId: string, code: string) {
-    await this.limit(`mfa:${identityId}`, 10, '15 minutes');
-    const [idn] = await this.db.system(`select totp_secret, totp_enabled_at from public.identities where id = $1`, [identityId]);
-    if (!idn?.totp_secret || idn.totp_enabled_at) throw new BadRequestException('Start the authenticator set-up first');
-    if (!verifyTotp(idn.totp_secret, code)) throw new UnauthorizedException('Wrong authenticator code');
-    await this.db.system(`update public.identities set totp_enabled_at = now() where id = $1`, [identityId]);
-  }
-
-  async totpSetupWithToken(setupToken: string) {
-    return this.totpSetup(this.tokens.verifyStep(setupToken, 'mfa_setup').sub);
-  }
-
-  async totpEnableWithToken(setupToken: string, code: string) {
-    const { sub, mid } = this.tokens.verifyStep(setupToken, 'mfa_setup');
-    await this.totpEnable(sub, code);
-    return { session: await this.issueFor(sub, mid) };
+  /** Opens a client as Rumfa support: an admin membership of their own there (created on first use), logged. */
+  private async enterAsSupport(sub: string, sid: string, tenantId: string, via: string): Promise<Session> {
+    const mid = await this.db.systemTx(async (q) => {
+      const [s] = await q(`select full_name, role, status from public.platform_staff where id = $1 and identity_id = $2`, [sid, sub]);
+      if (s?.status !== 'active' || !['owner', 'staff'].includes(s.role)) throw new ForbiddenException('Your Rumfa access has changed; sign in again');
+      const [t] = await q(`select id, seat, seat_area, status from public.tenants where id = $1`, [tenantId]);
+      if (t?.status !== 'active') throw new NotFoundException('That client is not active');
+      // Where an admin of this client works: the seat's area, else the client's widest coverage
+      const [cov] = await q(`select level, area_code from public.tenant_coverage where tenant_id = $1
+                              order by case level when 'national' then 0 when 'state' then 1 else 2 end, area_code limit 1`, [tenantId]);
+      const where = t.seat ? staffArea(t.seat, t.seat_area)
+        : cov?.level === 'national' || !cov ? { level: 'national', area: 'NG' } : { level: cov.level, area: cov.area_code };
+      // Already a real member of this client (the same email): use that membership as it is
+      const [own] = await q(`select id from public.volunteers where tenant_id = $1 and user_id = $2 and platform_staff_id is null and status = 'active'`, [tenantId, sub]);
+      let id = own?.id;
+      if (!id) {
+        [{ id }] = await q(
+          `insert into public.volunteers (tenant_id, full_name, role, level, area_code, status, user_id, platform_staff_id, onboarded_at)
+           values ($1, $2, 'admin', $3, $4, 'active', $5, $6, now())
+           on conflict (tenant_id, platform_staff_id) where platform_staff_id is not null
+             do update set status = 'active', role = 'admin', level = excluded.level, area_code = excluded.area_code, user_id = excluded.user_id
+           returning id`,
+          [tenantId, `Rumfa support · ${s.full_name}`, where.level, where.area, sub, sid]);
+      }
+      await q(`insert into public.platform_audit (staff_id, action, target_type, target_id, tenant_id, details) values ($1, 'support.enter', 'client', $2, $3, $4)`,
+        [sid, tenantId, tenantId, JSON.stringify({ via })]);
+      return id as string;
+    });
+    return this.issueFor(sub, mid);
   }
 
   private async issueFor(identityId: string, mid: string): Promise<Session> {

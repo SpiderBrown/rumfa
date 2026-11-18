@@ -8,9 +8,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
-type Step = 'password' | 'mfa' | 'setup' | 'invite';
+type Step = 'password' | 'invite';
 
-/** Staff sign-in: email + password, then an authenticator code for roles that need one. Also accepts invite links. */
+/** Staff sign-in: email + password. Also accepts invite links, and Rumfa Console's one-time "open as admin" links. */
 @Component({
   selector: 'app-login',
   imports: [FormsModule, MatCardModule, MatFormFieldModule, MatInputModule, MatButtonModule],
@@ -28,22 +28,8 @@ type Step = 'password' | 'mfa' | 'setup' | 'invite';
               <input matInput type="password" autocomplete="current-password" [(ngModel)]="password" (keyup.enter)="login()" /></mat-form-field>
             <button mat-flat-button class="full" [disabled]="busy()" (click)="login()">Sign in</button>
           }
-          @case ('mfa') {
-            <p>Enter the 6-digit code from your authenticator app.</p>
-            <mat-form-field class="full"><mat-label>Code</mat-label>
-              <input matInput inputmode="numeric" maxlength="6" autocomplete="one-time-code" [(ngModel)]="code" (keyup.enter)="mfa()" /></mat-form-field>
-            <button mat-flat-button class="full" [disabled]="busy()" (click)="mfa()">Continue</button>
-          }
-          @case ('setup') {
-            <p>Your role needs an authenticator app (Google Authenticator, Microsoft Authenticator or Authy).
-               Add an account with this key, then enter the code it shows.</p>
-            @if (secret()) { <p class="key">{{ secret() }}</p> <p class="hint"><a [href]="otpauth()">Open in authenticator app</a></p> }
-            <mat-form-field class="full"><mat-label>Code</mat-label>
-              <input matInput inputmode="numeric" maxlength="6" [(ngModel)]="code" (keyup.enter)="enable()" /></mat-form-field>
-            <button mat-flat-button class="full" [disabled]="busy()" (click)="enable()">Turn on and sign in</button>
-          }
           @case ('invite') {
-            <p>Choose a password (at least 10 characters) to finish setting up your account.</p>
+            <p>Choose a password (at least 8 characters) to finish setting up your account.</p>
             <mat-form-field class="full"><mat-label>New password</mat-label>
               <input matInput type="password" autocomplete="new-password" [(ngModel)]="password" /></mat-form-field>
             <mat-form-field class="full"><mat-label>Repeat password</mat-label>
@@ -56,7 +42,7 @@ type Step = 'password' | 'mfa' | 'setup' | 'invite';
   </div>`,
   styles: `.wrap { min-height: 100vh; display: grid; place-items: center; background: var(--mat-sys-surface-container); }
            .card { width: min(420px, 92vw); padding: 8px; } mat-card-content { padding-top: 16px; }
-           .key { font-family: monospace; font-size: 15px; letter-spacing: 1px; word-break: break-all; background: var(--mat-sys-surface-container-high); padding: 8px; border-radius: 6px; }`,
+`,
 })
 export class LoginPage {
   api = inject(Api);
@@ -64,19 +50,23 @@ export class LoginPage {
   private router = inject(Router);
   step = signal<Step>('password');
   busy = signal(false);
-  secret = signal('');
-  otpauth = signal('');
   email = '';
   password = '';
   password2 = '';
-  code = '';
-  private token = '';
   private invite = inject(ActivatedRoute).snapshot.queryParamMap.get('invite');
 
-  constructor() { if (this.invite) this.step.set('invite'); }
+  constructor() {
+    if (this.invite) this.step.set('invite');
+    // Rumfa Console "Open dashboard as admin": #support=<one-time ticket>
+    const ticket = new URLSearchParams(location.hash.slice(1)).get('support');
+    if (ticket) {
+      history.replaceState(null, '', location.pathname); // the ticket works once; keep it out of the history
+      void this.run(async () => { await this.api.supportTicket(ticket); await this.done(); });
+    }
+  }
 
   subtitle() {
-    return ({ password: 'Sign in with your work email', mfa: 'Second step', setup: 'Set up your authenticator', invite: 'Welcome' } as Record<Step, string>)[this.step()];
+    return ({ password: 'Sign in with your work email', invite: 'Welcome' } as Record<Step, string>)[this.step()];
   }
 
   private async run(fn: () => Promise<unknown>) {
@@ -86,23 +76,13 @@ export class LoginPage {
 
   login() {
     return this.run(async () => {
-      const r = await this.api.login(this.email.trim(), this.password);
+      await this.api.login(this.email.trim(), this.password);
       this.password = '';
-      if (r.step === 'done') return this.done();
-      this.token = r.token;
-      this.code = '';
-      if (r.step === 'setup') {
-        const s = await this.api.totpSetup(this.token);
-        this.secret.set(s.secret.replace(/(.{4})/g, '$1 ').trim());
-        this.otpauth.set(s.otpauthUrl);
-      }
-      this.step.set(r.step);
+      await this.done();
     });
   }
-  mfa() { return this.run(async () => { await this.api.mfa(this.token, this.code.trim()); await this.done(); }); }
-  enable() { return this.run(async () => { await this.api.totpEnable(this.token, this.code.trim()); await this.done(); }); }
   accept() {
-    if (this.password.length < 10) { this.ui.error('Use at least 10 characters'); return; }
+    if (this.password.length < 8) { this.ui.error('Use at least 8 characters'); return; }
     if (this.password !== this.password2) { this.ui.error('The two passwords are different'); return; }
     return this.run(async () => {
       const r = await this.api.acceptInvite(this.invite!, this.password);

@@ -1,0 +1,64 @@
+// Include theming for Angular Material with `mat.theme()`.
+// This Sass mixin will define CSS variables that are used for styling Angular Material
+// components according to the Material 3 design spec.
+// Learn more about theming and how to use it for your application's
+// custom components at https://material.angular.dev/guide/theming
+@use '@angular/material' as mat;
+
+html {
+  height: 100%;
+  @include mat.theme(
+    (
+      color: (
+        primary: mat.$azure-palette,
+        tertiary: mat.$blue-palette,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+}
+
+body {
+  // Default the application to a light color theme. This can be changed to
+  // `dark` to enable the dark color theme, or to `light dark` to defer to the
+  // user's system settings.
+  color-scheme: light;
+
+  // Set a default background, font and text colors for the application using
+  // Angular Material's system-level CSS variables. Learn more about these
+  // variables at https://material.angular.dev/guide/system-variables
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+
+  // Reset the user agent margin.
+  margin: 0;
+  height: 100%;
+}
+/* You can add global styles to this file, and also import other style files */
+
+.full { width: 100%; }
+.snack-error { --mat-snack-bar-container-color: var(--mat-sys-error-container); --mat-snack-bar-supporting-text-color: var(--mat-sys-on-error-container); }
+a { color: var(--mat-sys-primary); }
+
+.full { width: 100%; }
+.snack-error { --mat-snack-bar-container-color: #8f1d1d; }
+.page { max-width: 1200px; }
+.page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.page-head h1 { font: var(--mat-sys-headline-small); margin: 0; }
+.spacer { flex: 1; }
+.hint { color: var(--mat-sys-on-surface-variant); font-size: 13px; }
+table.grid { width: 100%; border-collapse: collapse; background: var(--mat-sys-surface); }
+table.grid th { text-align: left; font: var(--mat-sys-label-medium); color: var(--mat-sys-on-surface-variant); padding: 8px 10px; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+table.grid td { padding: 8px 10px; border-bottom: 1px solid var(--mat-sys-outline-variant); vertical-align: middle; }
+table.grid tr.link { cursor: pointer; } table.grid tr.link:hover td { background: var(--mat-sys-surface-container); }
+.chip { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--mat-sys-outline-variant); margin-right: 4px; }
+.chip.ok { background: #e3f4e8; border-color: #4caf50; } .chip.bad { background: #fde2e2; border-color: #b3261e; } .chip.warn { background: #fff1e0; border-color: #fb923c; }
+.card { background: var(--mat-sys-surface-container-low); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font: var(--mat-sys-title-medium); margin: 0 0 12px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.row > * { flex: 1 1 200px; }
+.logo { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; background: #fff; border: 1px solid var(--mat-sys-outline-variant); vertical-align: middle; }
+.swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,.2); vertical-align: middle; }
+code.link { display: block; word-break: break-all; background: var(--mat-sys-surface-container); padding: 6px 8px; border-radius: 6px; font-size: 12px; }

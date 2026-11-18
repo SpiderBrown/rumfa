@@ -6,6 +6,7 @@ const signedIn: CanActivateFn = () => {
   const s = inject(Api);
   return s.me() ? true : inject(Router).parseUrl('/login');
 };
+const addon = (a: 'voice' | 'airtime'): CanActivateFn => () => inject(Api).addons()[a] || inject(Router).parseUrl('/');
 const roles = (...r: string[]): CanActivateFn => () => r.includes(inject(Api).me()?.role ?? '') || inject(Router).parseUrl('/');
 
 export const routes: Routes = [
@@ -27,9 +28,9 @@ export const routes: Routes = [
       { path: 'contacts', loadComponent: () => import('./pages/contacts').then((m) => m.ContactsPage) },
       { path: 'people', loadComponent: () => import('./pages/people').then((m) => m.PeoplePage) },
       { path: 'shifts', canActivate: [roles('supervisor', 'admin')], loadComponent: () => import('./pages/shifts').then((m) => m.ShiftsPage) },
-      { path: 'topups', canActivate: [roles('admin')], loadComponent: () => import('./pages/topups').then((m) => m.TopupsPage) },
+      { path: 'topups', canActivate: [roles('admin'), addon('airtime')], loadComponent: () => import('./pages/topups').then((m) => m.TopupsPage) },
       { path: 'settings', canActivate: [roles('admin')], loadComponent: () => import('./pages/settings').then((m) => m.SettingsPage) },
-      { path: 'voice', canActivate: [roles('voice_ops', 'admin')], loadComponent: () => import('./pages/voice').then((m) => m.VoicePage) },
+      { path: 'voice', canActivate: [roles('voice_ops', 'admin'), addon('voice')], loadComponent: () => import('./pages/voice').then((m) => m.VoicePage) },
     ],
   },
   { path: '**', redirectTo: '' },

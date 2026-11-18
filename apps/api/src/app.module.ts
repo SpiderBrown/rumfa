@@ -11,6 +11,7 @@ import { CommonModule } from './common/common.module';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { DomainModule } from './domain/domain.module';
+import { PlatformModule } from './platform/platform.module';
 import { LiveGateway } from './live/live.gateway';
 
 @ApiTags('Health')
@@ -34,6 +35,7 @@ class HealthController {
     CommonModule,
     AuthModule,
     DomainModule,
+    PlatformModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }, LiveGateway],

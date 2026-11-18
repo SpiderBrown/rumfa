@@ -44,6 +44,8 @@ export class Api {
   readonly session = signal<Session | null>(this.sess);
   readonly me = signal<Me | null>(read<any>(K.context)?.me ?? null);
   readonly parties = signal<string[]>(read<any>(K.context)?.parties ?? []);
+  /** Party colours from Rumfa Console's Parties page */
+  readonly partyColours = signal<Record<string, string>>(read<any>(K.context)?.partyColours ?? {});
   /** The organisation's own party on this ballot, if set (shown first and largest on the live count) */
   readonly ownParty = signal<string | null>(read<any>(K.context)?.ownParty ?? null);
   readonly otherMemberships = signal<Membership[]>(read<any>(K.context)?.otherMemberships ?? []);
@@ -117,10 +119,11 @@ export class Api {
 
   async refreshMe(): Promise<void> {
     const [ctx, me] = await Promise.all([this.call<any>('GET', '/me/context'), this.call<any>('GET', '/auth/me')]);
-    const cache = { me: ctx.me, parties: ctx.parties, categories: ctx.categories, otherMemberships: me.otherMemberships, calls: ctx.calls, ownParty: ctx.ownParty ?? null };
+    const cache = { me: ctx.me, parties: ctx.parties, partyColours: ctx.partyColours ?? {}, categories: ctx.categories, otherMemberships: me.otherMemberships, calls: ctx.calls, ownParty: ctx.ownParty ?? null };
     localStorage.setItem(K.context, JSON.stringify(cache));
     this.me.set(ctx.me);
     this.parties.set(ctx.parties);
+    this.partyColours.set(ctx.partyColours ?? {});
     this.ownParty.set(ctx.ownParty ?? null);
     if (ctx.calls) this.callOptions.set(ctx.calls);
     this.otherMemberships.set(me.otherMemberships);

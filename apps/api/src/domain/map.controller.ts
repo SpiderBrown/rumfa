@@ -176,7 +176,8 @@ export class MapController {
     return {
       scope, parent, level: parent === 'NG' ? 'national' : zone ? 'zone' : district ? 'senatorial' : LEVEL_OF_LEN[parent.length],
       childLevel: byZone ? 'zone' : bySenatorial ? 'senatorial' : LEVEL_OF_LEN[len], group: byZone || zone ? 'zone' : bySenatorial || district ? 'senatorial' : null,
-      election, parties, partyColours: t?.settings?.party_colours ?? {},
+      election, parties, partyColours: Object.fromEntries(
+        (await this.db.system(`select acronym, colour from public.parties where colour is not null`)).map((c) => [c.acronym, c.colour])),
       breadcrumb: await this.breadcrumb(scope, parent, groups.has('senatorial') || district, groups.has('zone') || zone),
       shape: shape?.geometry ?? null,
       center: shape ? { lat: shape.center_lat, lng: shape.center_lng } : approxArea ? { lat: approxArea.lat, lng: approxArea.lng } : null,

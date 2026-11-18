@@ -71,7 +71,9 @@ async function atAirtime(t: Topup): Promise<{ status: 'success' | 'failed'; ref:
 export async function processTopups(limit = 30): Promise<number> {
   // Approved batches start sending
   await q(`update public.topup_batches set status = 'sending' where status = 'approved'`);
-  const batches = await q(`select b.id, p.data_plan_code from public.topup_batches b join public.topup_plans p on p.id = b.plan_id where b.status = 'sending'`);
+  // Only clients with the Airtime and data add-on switched on (others wait until it is)
+  const batches = await q(`select b.id, p.data_plan_code from public.topup_batches b join public.topup_plans p on p.id = b.plan_id
+                             join public.tenants t on t.id = b.tenant_id where b.status = 'sending' and t.settings->'addons'->>'airtime' = 'true'`);
   let n = 0;
   for (const b of batches) {
     const items = await q<Topup>(

@@ -43,25 +43,11 @@ export class StaffLoginDto {
   @ApiProperty({ description: "The dashboard site's tenant (from its config)" }) @IsUUID() tenantId: string;
 }
 
-export class MfaDto {
-  @ApiProperty() @IsString() mfaToken: string;
-  @ApiProperty() @Matches(/^\d{6}$/) code: string;
-}
-
-export class TotpSetupDto {
-  @ApiProperty() @IsString() setupToken: string;
-}
-
-export class TotpEnableDto {
-  @ApiProperty() @IsString() setupToken: string;
-  @ApiProperty() @Matches(/^\d{6}$/) code: string;
-}
-
-export class TotpCodeDto {
-  @ApiProperty() @Matches(/^\d{6}$/) code: string;
-}
-
 export class AcceptInviteDto {
   @ApiProperty() @IsString() @MaxLength(200) token: string;
-  @ApiProperty({ minLength: 10 }) @IsString() @MinLength(10) @MaxLength(200) password: string;
+  @ApiProperty({ minLength: 8 }) @IsString() @MinLength(8) @MaxLength(200) password: string;
+}
+
+export class SupportTicketDto {
+  @ApiProperty() @IsString() @MaxLength(200) ticket: string;
 }

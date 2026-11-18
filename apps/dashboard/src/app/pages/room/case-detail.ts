@@ -15,7 +15,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
 import { Calls } from '../../core/calls';
-import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine } from '../../core/ui';
+import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine, reportsLine } from '../../core/ui';
 import { LiveViewer } from './live-viewer';
 import type { CaseRow } from './queue';
 
@@ -35,7 +35,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
   </div>
   @if (c.where) { <div class="where"><mat-icon>place</mat-icon>{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }
   <div class="meta">
-    {{ label(c.status) }} · {{ c.report_count }} reports from {{ c.reporter_count }} people · opened {{ c.created_at | ago }}
+    {{ label(c.status) }} · {{ c.report_count }} report{{ c.report_count === 1 ? '' : 's' }}: {{ reportsLine(c.report_count, c.reporter_count, alerts().length) }} · opened {{ c.created_at | ago }}
     @if (c.status === 'assigned') { · acknowledge {{ c.ack_due_at | ago }} } @else if (!['resolved','closed','merged'].includes(c.status)) { · due {{ c.due_at | ago }} }
     @if (c.merged_into) { · merged into <a [routerLink]="['/room/case', c.merged_into]">another case</a> }
   </div>
@@ -206,6 +206,7 @@ export class CaseDetailPage implements OnDestroy {
   c = signal<(CaseRow & { merged_into: string | null }) | null>(null);
   incidents = signal<any[]>([]);
   alerts = signal<any[]>([]);
+  readonly reportsLine = reportsLine;
   events = signal<any[]>([]);
   suggestions = signal<any[]>([]);
   related = signal<Record<string, string>>({});

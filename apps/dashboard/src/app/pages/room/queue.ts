@@ -9,11 +9,11 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
-import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine, type CasePlace } from '../../core/ui';
+import { AgoPipe, SEVERITY_COLOR, Ui, label, placeLine, reportsLine, type CasePlace } from '../../core/ui';
 
 export interface CaseRow {
   id: string; title: string; what?: string | null; where?: CasePlace | null; category: string; severity: string; status: string; pu_code: string | null; area_code: string;
-  report_count: number; reporter_count: number; assigned_to: string | null; queue_id: string; created_at: string;
+  report_count: number; reporter_count: number; alert_count?: number; assigned_to: string | null; queue_id: string; created_at: string;
   ack_due_at: string | null; due_at: string | null; escalation_level: number; incident_group_id: string | null;
 }
 interface QueueCount { queue_id: string; name: string; kind: string; waiting: number; assigned: number; overdue: number; critical: number }
@@ -58,7 +58,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
         @if (c.incident_group_id) { <mat-icon class="small" matTooltip="Part of a linked incident group">link</mat-icon> }
         @if (c.where) { <div class="where">{{ place(c.where) }} <span class="code">{{ c.where.code }}</span></div> }</td></ng-container>
     <ng-container matColumnDef="reports"><th mat-header-cell *matHeaderCellDef>Reports</th>
-      <td mat-cell *matCellDef="let c">{{ c.report_count }} from {{ c.reporter_count || 0 }}</td></ng-container>
+      <td mat-cell *matCellDef="let c">{{ reports(c) }}</td></ng-container>
     <ng-container matColumnDef="status"><th mat-header-cell *matHeaderCellDef>Status</th>
       <td mat-cell *matCellDef="let c">{{ label(c.status) }} @if (c.escalation_level) { <span class="warn">↑{{ c.escalation_level }}</span> }</td></ng-container>
     <ng-container matColumnDef="owner"><th mat-header-cell *matHeaderCellDef>Operator</th>
@@ -91,6 +91,7 @@ export class QueuePage implements OnDestroy {
   label = label;
   sevColor = SEVERITY_COLOR;
   place = (w: CasePlace) => placeLine(w);
+  reports(c: CaseRow) { return reportsLine(c.report_count, c.reporter_count, c.alert_count ?? 0); }
   cols = ['severity', 'title', 'reports', 'status', 'owner', 'due', 'age'];
   viewSig = signal<'mine' | 'open' | 'closed'>('open');
   get view() { return this.viewSig(); } set view(v) { this.viewSig.set(v); void this.load(); }

@@ -31,7 +31,8 @@ export class CasesController {
   async list(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('queue') queue?: string, @Query('mine') mine?: string,
        @Query('sinceHours') sinceHours?: string) {
     return withCasePlaces(this.db, await this.db.asUser(user, (q) => q(
-      `select * from public.cases
+      // alert_count: reports from automatic checks (no person), so "reports from people" can be told apart
+      `select c.*, (select count(*) from public.alerts a where a.case_id = c.id)::int as alert_count from public.cases c
         where tenant_id = $1
           and ($2::text is null or status = any(string_to_array($2, ',')))
           and ($3::uuid is null or queue_id = $3)

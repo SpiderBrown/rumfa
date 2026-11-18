@@ -108,3 +108,15 @@ export function placeLine(w: CasePlace | null | undefined, withParents = true): 
   if (!w) return '';
   return [w.name !== w.code ? w.name : null, ...(withParents ? w.parents : [])].filter(Boolean).join(' · ');
 }
+
+/**
+ * Who a case's reports came from: people (agents, coordinators) and automatic checks (result sheet checks,
+ * unanswered callbacks), which have no reporter. "2 from 1 person + 1 automatic check".
+ */
+export function reportsLine(reports: number, people: number, checks: number): string {
+  const fromPeople = Math.max(0, reports - checks);
+  const parts: string[] = [];
+  if (fromPeople) parts.push(`${fromPeople} from ${people || 1} ${(people || 1) === 1 ? 'person' : 'people'}`);
+  if (checks) parts.push(`${checks} automatic check${checks === 1 ? '' : 's'}`);
+  return parts.join(' + ') || 'None';
+}

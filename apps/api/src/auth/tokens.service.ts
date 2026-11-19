@@ -14,6 +14,9 @@ export interface Session {
   membership: Membership;
 }
 
+/** Seconds after a refresh token's use when presenting it again is still the same refresh (two tabs, a reload) */
+const REUSE_GRACE_S = 60;
+
 @Injectable()
 export class TokensService {
   private readonly cfg: AppConfig['auth'];
@@ -64,12 +67,13 @@ export class TokensService {
         `select r.*, s.identity_id, s.role, s.status from public.platform_refresh_tokens r join public.platform_staff s on s.id = r.staff_id
           where r.token_hash = $1 for update of r`, [hash]);
       if (!rt) throw new UnauthorizedException('Session expired; sign in again');
-      if (rt.used_at) {
+      const justUsed = rt.used_at && Date.now() - new Date(rt.used_at).getTime() < REUSE_GRACE_S * 1000;
+      if (rt.used_at && !justUsed) {
         await q(`update public.platform_refresh_tokens set revoked_at = now() where family = $1 and revoked_at is null`, [rt.family]);
         return { reused: true } as const;
       }
       if (rt.revoked_at || new Date(rt.expires_at) < new Date() || rt.status !== 'active') throw new UnauthorizedException('Session expired; sign in again');
-      await q(`update public.platform_refresh_tokens set used_at = now() where id = $1`, [rt.id]);
+      if (!rt.used_at) await q(`update public.platform_refresh_tokens set used_at = now() where id = $1`, [rt.id]);
       return { rt };
     });
     if ('reused' in r) throw new UnauthorizedException('Session ended for safety; sign in again');
@@ -112,7 +116,11 @@ export class TokensService {
     return { accessToken: this.sign('access', user, this.cfg.accessTtlSeconds), refreshToken: refresh, expiresIn: this.cfg.accessTtlSeconds, membership: m };
   }
 
-  /** One use per refresh token. Using a replaced token again means it leaked: the whole family is revoked. */
+  /**
+   * One use per refresh token. Using a replaced token again means it leaked: the whole family is revoked.
+   * Except right after its use: two tabs of the same browser share a session and refresh at the same moment,
+   * and a page can reload before it saves the new token. Within REUSE_GRACE_S that is the same refresh, not a leak.
+   */
   async refresh(refreshToken: string): Promise<Session> {
     const hash = keyedHash(this.cfg.jwtSecret, refreshToken);
     const r = await this.db.systemTx(async (q) => {
@@ -125,7 +133,8 @@ export class TokensService {
         [hash],
       );
       if (!rt) throw new UnauthorizedException('Session expired; sign in again');
-      if (rt.used_at) {
+      const justUsed = rt.used_at && Date.now() - new Date(rt.used_at).getTime() < REUSE_GRACE_S * 1000;
+      if (rt.used_at && !justUsed) {
         // Commit the revocation, then refuse (throwing here would roll it back)
         await q(`update public.refresh_tokens set revoked_at = now() where family = $1 and revoked_at is null`, [rt.family]);
         return { reused: true } as const;
@@ -133,7 +142,7 @@ export class TokensService {
       if (rt.revoked_at || new Date(rt.expires_at) < new Date() || rt.device_revoked || rt.device_locked || rt.identity_status !== 'active') {
         throw new UnauthorizedException('Session expired; sign in again');
       }
-      await q(`update public.refresh_tokens set used_at = now() where id = $1`, [rt.id]);
+      if (!rt.used_at) await q(`update public.refresh_tokens set used_at = now() where id = $1`, [rt.id]);
       const [m] = await q<Membership>(MEMBERSHIP_SQL + ` and v.id = $2`, [rt.identity_id, rt.volunteer_id]);
       if (!m) throw new UnauthorizedException('You no longer have access to this organisation');
       return { rt, m };

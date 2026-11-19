@@ -89,8 +89,13 @@ describe('Sign-in and tenant isolation (e2e)', () => {
     const s = (await http.post(api('/auth/pin')).send({ phone: agentPhone, pin: '482916', ...device, tenantId: TENANT_A }).expect(200)).body.session;
     const r1 = await http.post(api('/auth/refresh')).send({ refreshToken: s.refreshToken }).expect(200);
     expect(r1.body.refreshToken).not.toEqual(s.refreshToken);
+    // Two tabs refreshing at once (or a reload mid-refresh): the same token again within a minute is fine
+    const r2 = await http.post(api('/auth/refresh')).send({ refreshToken: s.refreshToken }).expect(200);
+    // Later, the same token again means it leaked: the whole session ends
+    await ds.query(`update public.refresh_tokens set used_at = now() - interval '2 minutes' where used_at is not null and family = (select family from public.refresh_tokens where used_at is not null order by used_at desc limit 1)`);
     await http.post(api('/auth/refresh')).send({ refreshToken: s.refreshToken }).expect(401); // reuse
     await http.post(api('/auth/refresh')).send({ refreshToken: r1.body.refreshToken }).expect(401); // family revoked
+    await http.post(api('/auth/refresh')).send({ refreshToken: r2.body.refreshToken }).expect(401);
   });
 
   it('coordinator issues an activation code; it activates the phone once', async () => {

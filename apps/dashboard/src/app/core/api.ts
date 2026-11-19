@@ -20,6 +20,7 @@ export class ApiError extends Error {
 
 export const ROOM_ROLES = ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'];
 const STORE = 'rumfa.room.session';
+function readSession(): Session | null { try { return JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { return null; } }
 
 /**
  * The dashboard's only way to the backend: the Rumfa API (REST + Socket.IO live updates).
@@ -143,6 +144,12 @@ export class Api {
   private refresh(): Promise<boolean> {
     this.refreshing ??= (async () => {
       try {
+        // Another tab of this browser may have refreshed already: use its session instead of refreshing again
+        const stored = readSession();
+        if (stored && this.session && stored.refreshToken !== this.session.refreshToken && stored.membership?.mid === this.session.membership?.mid) {
+          this.session = stored;
+          return true;
+        }
         const s = await this.request<Session>('POST', '/auth/refresh', { refreshToken: this.session!.refreshToken }, false, true);
         this.save(s);
         return true;

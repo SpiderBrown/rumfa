@@ -56,7 +56,9 @@ describe('Rumfa Console (e2e)', () => {
     const s = await http.post(api('/platform/auth/login')).send({ email: 'owner@rumfa.test', password: o.password }).expect(200);
     // Refresh rotates; using an old refresh token again ends the session family
     const r = await http.post(api('/platform/auth/refresh')).send({ refreshToken: s.body.session.refreshToken }).expect(200);
-    await http.post(api('/platform/auth/refresh')).send({ refreshToken: s.body.session.refreshToken }).expect(401);
+    await http.post(api('/platform/auth/refresh')).send({ refreshToken: s.body.session.refreshToken }).expect(200); // two tabs at once: fine
+    await ds.query(`update public.platform_refresh_tokens set used_at = now() - interval '2 minutes' where used_at is not null`);
+    await http.post(api('/platform/auth/refresh')).send({ refreshToken: s.body.session.refreshToken }).expect(401); // later: leaked
     await http.post(api('/platform/auth/refresh')).send({ refreshToken: r.body.refreshToken }).expect(401);
   });
 

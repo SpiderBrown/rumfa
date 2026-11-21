@@ -197,3 +197,17 @@ export class MediaViewerDialog {
     if (e.key === 'ArrowLeft') { this.step(-1); e.preventDefault(); }
   }
 }
+
+/** A small photo from a stored file, for lists (a case's first photo). Not clickable: the row opens the case. */
+@Component({
+  selector: 'app-ref-img',
+  template: `@if (url(); as u) { <img [src]="u" alt="" loading="lazy" (error)="url.set(null)" /> } @else { <span class="ph" aria-hidden="true"></span> }`,
+  styles: `:host { display: block; width: var(--w, 88px); height: var(--h, 66px); border-radius: 8px; overflow: hidden; background: #eef1f4; flex: none; }
+    img { width: 100%; height: 100%; object-fit: cover; display: block; } .ph { display: block; width: 100%; height: 100%; }`,
+})
+export class RefImg {
+  private links = inject(MediaLinks);
+  ref = input.required<MediaRef>();
+  url = signal<string | null>(null);
+  ngOnInit() { this.links.url(this.ref()).then((u) => this.url.set(u), () => this.url.set(null)); }
+}

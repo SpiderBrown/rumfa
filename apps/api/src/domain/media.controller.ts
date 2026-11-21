@@ -1,11 +1,12 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator';
 import type { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { CurrentUser, Public } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
+import { SkipThrottle } from '@nestjs/throttler';
 import { StorageService, type Bucket } from '../common/storage.service';
 import { ROOM } from './roles';
 
@@ -15,6 +16,7 @@ const KINDS: Record<string, { bucket: Bucket; roles?: string[]; ext: string[] }>
   voice_note: { bucket: 'voice-notes', ext: ['m4a', 'ogg', 'webm', 'aac', 'mp3', 'wav'] },
   chat: { bucket: 'chat-media', ext: ['jpg', 'jpeg', 'png', 'webp', 'm4a', 'ogg', 'webm', 'aac', 'mp4'] },
   live_clip: { bucket: 'live-clips', roles: ['agent', 'volunteer', 'coordinator'], ext: ['mp4', 'webm'] },
+  announcement: { bucket: 'voice-notes', roles: ['coordinator', 'supervisor', 'admin'], ext: ['wav', 'mp3'] },
   voice_recording: { bucket: 'voice-recordings', roles: ['voice_ops', 'admin'], ext: ['mp3', 'wav', 'm4a', 'ogg'] },
   voice_consent: { bucket: 'voice-recordings', roles: ['voice_ops', 'admin'], ext: ['pdf', 'jpg', 'jpeg', 'png'] },
   contact_import: { bucket: 'contact-imports', roles: ['admin'], ext: ['csv', 'xlsx'] },
@@ -26,7 +28,8 @@ class UploadDto {
   @ApiPropertyOptional({ description: 'Unit code, used to file EC8A photos' }) @IsOptional() @Matches(/^\d{2}-\d{2}-\d{2}-\d{3}$/) pu?: string;
 }
 class ViewDto {
-  @ApiProperty({ enum: ['ec8a', 'incident', 'message', 'irev', 'callback', 'live'] }) @IsIn(['ec8a', 'incident', 'message', 'irev', 'callback', 'live']) kind: string;
+  @ApiPropertyOptional({ description: 'ec8a: the full-resolution original' }) @IsOptional() @IsBoolean() full?: boolean;
+  @ApiProperty({ enum: ['ec8a', 'incident', 'message', 'irev', 'callback', 'live', 'voice', 'announcement'] }) @IsIn(['ec8a', 'incident', 'message', 'irev', 'callback', 'live', 'voice', 'announcement']) kind: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() id?: string;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) index?: number;
   @ApiPropertyOptional() @IsOptional() @IsUUID() electionId?: string;
@@ -62,16 +65,25 @@ export class MediaController {
     const found: { bucket: Bucket; path: string | null; link?: string } = await this.db.asUser(u, async (q) => {
       const one = async (sql: string, params: unknown[]) => (await q(sql, params))[0];
       switch (b.kind) {
-        case 'ec8a': return { bucket: 'ec8a' as Bucket, path: (await one(`select sheet_photo_path p from public.result_submissions where id = $1`, [b.id]))?.p };
+        // full: the full-resolution original, when the agent's app has sent it
+        case 'ec8a': return { bucket: 'ec8a' as Bucket, path: (await one(
+          `select case when $2 then coalesce(full_photo_path, sheet_photo_path) else sheet_photo_path end p from public.result_submissions where id = $1`, [b.id, !!b.full]))?.p };
         case 'incident': return { bucket: 'incident-media' as Bucket, path: (await one(`select media_paths[$2 + 1] p from public.incidents where id = $1`, [b.id, b.index ?? 0]))?.p };
         case 'message': return { bucket: 'chat-media' as Bucket, path: (await one(`select media_path p from public.messages where id = $1`, [b.id]))?.p };
         case 'callback': return { bucket: 'voice-notes' as Bucket, path: (await one(`select voice_note_path p from public.callback_requests where id = $1`, [b.id]))?.p };
+        case 'voice': {
+          if (!['voice_ops', 'admin'].includes(u.role)) throw new ForbiddenException();
+          return { bucket: 'voice-recordings' as Bucket, path: (await one(`select storage_path p from public.voice_recordings where id = $1 and tenant_id = $2`, [b.id, u.tid]))?.p };
+        }
+        case 'announcement': return { bucket: 'voice-notes' as Bucket, path: (await this.db.system(`select audio_path p from public.voice_announcements where id = $1 and tenant_id = $2`, [b.id, u.tid]))[0]?.p };
         case 'live': return { bucket: 'live-clips' as Bucket, path: (await one(`select media_path p from public.live_view_requests where id = $1`, [b.id]))?.p };
         case 'irev': {
-          if (!ROOM.includes(u.role)) throw new ForbiddenException();
+          // The room, or an agent looking at their own unit's sheet (to check it against theirs)
+          if (!ROOM.includes(u.role) && !(u.role === 'agent' && b.pu === u.area)) throw new ForbiddenException();
           const ok = await one(`select 1 from public.tenant_elections where tenant_id = $1 and election_id = $2`, [u.tid, b.electionId]);
           if (!ok) throw new NotFoundException();
-          const a = await one(`select storage_path p, sheet_url l from public.irev_availability where election_id = $1 and pu_code = $2`, [b.electionId, b.pu]);
+          // (IReV data is public; the access checks are above)
+          const [a] = await this.db.system(`select storage_path p, sheet_url l from public.irev_availability where election_id = $1 and pu_code = $2`, [b.electionId, b.pu]);
           // Only INEC's link saved: show it through this API (INEC's servers don't let a browser load it from our site)
           if (!a?.p && a?.l && /^\d{2}-\d{2}-\d{2}-\d{3}$/.test(b.pu ?? '')) return { bucket: 'irev' as Bucket, path: null, link: `${b.electionId}/${b.pu}` };
           return { bucket: 'irev' as Bucket, path: a?.p };
@@ -89,7 +101,7 @@ export class MediaController {
    * An IReV sheet we only saved INEC's link to, passed through from INEC for viewing (nothing is stored).
    * The link is signed and short-lived (from POST /media/view-url); tries INEC's other copies if one is down.
    */
-  @Public() @Get('sheet-link/:election/:pu') @ApiExcludeEndpoint()
+  @SkipThrottle() @Public() @Get('sheet-link/:election/:pu') @ApiExcludeEndpoint()
   async sheetLink(@Param('election') election: string, @Param('pu') pu: string, @Query() qs: any, @Res() res: Response) {
     if (!/^[0-9a-f-]{36}$/.test(election) || !/^\d{2}-\d{2}-\d{2}-\d{3}$/.test(pu)) throw new NotFoundException();
     this.storage.verifyApiLink('sheet-link', `${election}/${pu}`, qs.exp, qs.sig);
@@ -114,7 +126,9 @@ export class MediaController {
   }
 
   // ---- Local storage driver (development and tests): signed links served by the API itself ----
-  @Public() @Get('files/:bucket/*path') @ApiExcludeEndpoint()
+  // Signed, short-lived links: not counted against the per-IP request limit (a room full of staff on one office
+  // network loads many photos)
+  @SkipThrottle() @Public() @Get('files/:bucket/*path') @ApiExcludeEndpoint()
   async localGet(@Param('bucket') bucket: string, @Param('path') path: string | string[], @Query() qs: any, @Res() res: Response) {
     const p = Array.isArray(path) ? path.join('/') : path;
     this.storage.verifyLocal('get', bucket, p, qs.exp, qs.sig);

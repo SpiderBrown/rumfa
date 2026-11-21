@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -8,6 +8,7 @@ import { ISSUE_BANDS, REPORTING_BANDS, partyColour, type MapLayer } from '@rumfa
 import { Api } from '../core/api';
 import { AgoPipe, Ui, placeLine } from '../core/ui';
 import { AreaMap, type MapArea, type MapData } from '../core/area-map';
+import { RefImg } from '../core/media';
 import type { CaseRow } from './room/queue';
 
 type Votes = Record<string, number>;
@@ -39,7 +40,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
  */
 @Component({
   selector: 'app-election-day',
-  imports: [DecimalPipe, RouterLink, MatButtonModule, MatIconModule, MatTooltipModule, AgoPipe],
+  imports: [DecimalPipe, RouterLink, MatButtonModule, MatIconModule, MatTooltipModule, AgoPipe, RefImg],
   template: `
   <div class="page">
     <header class="head">
@@ -107,47 +108,6 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
           </div>
         </div>
 
-        <!-- Votes: solid is confirmed from result sheets, hatched is the estimate for units not confirmed yet -->
-        @if (layer() === 'votes') {
-          <div class="r-card card">
-            <div class="card-head">
-              <h2>Votes in {{ areaName() }}</h2>
-              <div class="key sm">
-                <span><i class="solid" aria-hidden="true"></i>Confirmed (EC8A, IReV)</span>
-                <span><i class="hatch" aria-hidden="true"></i>@if (canEstimate()) { Estimate for units not confirmed yet } @else { Agents’ counts, not confirmed yet }</span>
-              </div>
-            </div>
-            @if (parties().length) {
-              <div class="bars">
-                @for (p of parties(); track p.party) {
-                  <div class="bar-row">
-                    <span class="pname"><i [style.background]="p.colour" aria-hidden="true"></i>{{ p.party }}</span>
-                    <div>
-                      <div class="track" role="img" [attr.aria-label]="p.party + ': ' + p.conf + ' confirmed, about ' + p.est + ' expected'">
-                        <div class="est" [style.width.%]="p.estW" [style.--c]="p.colour"></div>
-                        <div class="conf" [style.width.%]="p.confW" [style.background]="p.colour"></div>
-                      </div>
-                      <div class="sm"><b>{{ p.conf | number }}</b> confirmed ·
-                        @if (canEstimate()) { about <b>{{ p.est | number }}</b> expected · <b>{{ p.share }}%</b> of the estimate }
-                        @else { <b>{{ p.est | number }}</b> with agents' counts · <b>{{ p.share }}%</b> so far }</div>
-                    </div>
-                  </div>
-                }
-              </div>
-              @if (canEstimate()) {
-                <p class="muted sm note">Confirmed from result sheets for <b>{{ share(t().ec8a + t().irev, t().units) }}</b> of units.
-                  The estimate adds our agents' counts ({{ share(t().quick + t().live, t().units) }} of units) and scales up to all {{ t().units | number }} units.
-                  As sheets arrive, the hatched part fills in.</p>
-              } @else {
-                <p class="muted sm note">Only <b>{{ t().reported | number }}</b> of {{ t().units | number }} units have votes in, too few to estimate the final result.
-                  The estimate appears once {{ neededForEstimate() | number }} units are in. Go into a smaller area to see it sooner.</p>
-              }
-            } @else {
-              <p class="muted empty">No votes yet. They appear as agents send their sorting counts and result sheets.</p>
-            }
-          </div>
-        }
-
         <!-- By area: the same numbers as the map; a row goes into that area -->
         <div class="r-card card table-card">
           <div class="card-head pad">
@@ -176,6 +136,49 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
           · <a routerLink="/results">Results</a> · <a routerLink="/map">Full map</a></p>
       </section>
 
+      <div class="side">
+        <!-- Votes: solid is confirmed from result sheets, hatched is the estimate for units not confirmed yet -->
+        
+          <div class="r-card card votes">
+            <div class="card-head">
+              <h2>Votes so far</h2><span class="muted sm">{{ t().ec8a + t().irev | number }} of {{ t().units | number }} units confirmed{{ canEstimate() ? ' · estimate shown' : '' }}</span>
+              <div class="key sm">
+                <span><i class="solid" aria-hidden="true"></i>Confirmed (EC8A, IReV)</span>
+                <span><i class="hatch" aria-hidden="true"></i>@if (canEstimate()) { Estimate for units not confirmed yet } @else { Agents’ counts, not confirmed yet }</span>
+              </div>
+            </div>
+            @if (parties().length) {
+              <div class="bars">
+                @for (p of parties(); track p.party) {
+                  <div class="bar-row">
+                    <span class="pname"><i [style.background]="p.colour" aria-hidden="true"></i>{{ p.party }}</span>
+                    <div>
+                      <div class="track" role="img" [attr.aria-label]="p.party + ': ' + p.conf + ' confirmed, about ' + p.est + ' expected'">
+                        <div class="est" [style.width.%]="p.estW" [style.--c]="p.colour"></div>
+                        <div class="conf" [style.width.%]="p.confW" [style.background]="p.colour"></div>
+                      </div>
+                      <div class="xs"><b>{{ p.conf | number }}</b> confirmed ·
+                        @if (canEstimate()) { ~<b>{{ p.share }}%</b> estimate ({{ p.est | number }}) }
+                        @else { {{ p.est | number }} with agents' counts · <b>{{ p.share }}%</b> so far }</div>
+                    </div>
+                  </div>
+                }
+              </div>
+              @if (canEstimate()) {
+                <p class="muted sm note">Confirmed from result sheets for <b>{{ share(t().ec8a + t().irev, t().units) }}</b> of units.
+                  The estimate adds our agents' counts ({{ share(t().quick + t().live, t().units) }} of units) and scales up to all {{ t().units | number }} units.
+                  As sheets arrive, the hatched part fills in.</p>
+              } @else {
+                <p class="muted sm note">Only <b>{{ t().reported | number }}</b> of {{ t().units | number }} units have votes in, too few to estimate the final result.
+                  The estimate appears once {{ neededForEstimate() | number }} units are in. Go into a smaller area to see it sooner.</p>
+              }
+            } @else {
+              <p class="muted empty">No votes yet. They appear as agents send their sorting counts and result sheets.</p>
+            }
+          </div>
+        
+
+
       <!-- Flags and open cases in this area: always beside the numbers; each opens in the situation room -->
       <aside class="r-card flags" aria-label="Flags and open cases">
         <div class="f-head">
@@ -196,9 +199,12 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
         </div>
         @for (c of areaCases().slice(0, 12); track c.id) {
           <a class="flag r-focus" [routerLink]="['/room/case', c.id]">
-            <span class="f-top"><span class="r-pill" [class]="c.severity">{{ sevName(c.severity) }}</span><span class="muted sm">{{ c.created_at | ago }}</span></span>
-            <span class="f-title">{{ c.what ?? c.title }}</span>
-            <span class="muted sm">{{ place(c) }}</span>
+            <span class="f-main">
+              <span class="f-top"><span class="r-pill" [class]="c.severity">{{ sevName(c.severity) }}</span><span class="muted sm">{{ c.created_at | ago }}</span></span>
+              <span class="f-title">{{ c.what ?? c.title }}</span>
+              <span class="muted sm">{{ place(c) }}</span>
+            </span>
+            @if (c.thumb) { <app-ref-img class="f-thumb" [ref]="c.thumb" /> }
           </a>
         } @empty {
           @if (data()) { <div class="calm"><mat-icon>verified</mat-icon><span>{{ emptyCases() }}</span></div> }
@@ -208,6 +214,7 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
           <button class="else sm" (click)="caseScope.set('all')">{{ hiddenElsewhere() }} more outside {{ areaName() }}: show everywhere</button>
         }
       </aside>
+      </div>
     </div>
   </div>`,
   styles: `
@@ -272,22 +279,30 @@ const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low
     .go { text-align: right; padding-right: 12px; }
     .more a { font-weight: 600; }
 
-    .flags { flex: 1 1 300px; padding: 16px; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow: auto; box-sizing: border-box; }
-    .flag { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--r-line-soft); border-radius: 10px; color: var(--r-ink); text-decoration: none; }
+    .side { flex: 0 0 clamp(380px, 36%, 540px); min-width: 0; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow: auto; }
+    .side .votes .card-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .side .votes .bar-row { grid-template-columns: 60px minmax(0, 1fr); gap: 10px; }
+    .side .votes .track { height: 20px; }
+    .side .votes .key { gap: 10px; font-size: 12px; }
+    .xs { font-size: 12px; }
+    .flags { padding: 16px; display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
+    .flag { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--r-line-soft); border-radius: 10px; color: var(--r-ink); text-decoration: none; }
     .flag:hover { border-color: #9aa6b6; background: #fafbfc; }
     .f-top { display: flex; align-items: center; gap: 8px; }
+    .f-main { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+    .f-thumb { --w: 56px; --h: 44px; }
     .f-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .f-tools { display: flex; flex-direction: column; gap: 6px; } .f-tools .r-seg { align-self: flex-start; }
     .cnt { font-weight: 700; color: var(--r-muted); margin-left: 2px; } .on .cnt { color: var(--r-ink); }
     .else { border: 0; background: none; color: #0f5e8c; font: inherit; font-weight: 600; text-align: left; padding: 4px 0; cursor: pointer; } .f-title { font-weight: 600; font-size: 14px; line-height: 1.35; }
     .calm { display: flex; align-items: center; gap: 8px; color: var(--r-accent-strong); padding: 12px 4px; font-size: 14px; }
-    @media (max-width: 1000px) { .flags { position: static; max-height: none; } }
+    @media (max-width: 1000px) { .side { position: static; max-height: none; flex: 1 1 100%; } }
   `,
 })
 export class ElectionDayPage implements AfterViewInit, OnDestroy {
   private api = inject(Api);
   private ui = inject(Ui);
-  readonly layers: { id: MapLayer; name: string }[] = [{ id: 'reporting', name: 'Reporting' }, { id: 'issues', name: 'Issues' }, { id: 'votes', name: 'Votes' }];
+  readonly layers: { id: MapLayer; name: string }[] = [{ id: 'reporting', name: 'Progress' }, { id: 'issues', name: 'Issues' }, { id: 'votes', name: 'Votes' }];
 
   data = signal<DayData | null>(null);
   cases = signal<CaseRow[]>([]);
@@ -462,6 +477,11 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
 
   constructor() {
     effect(() => { this.layer(); this.stage(); this.draw(); });
+    // ?area=19-28 (from the search box): open that area; later searches move the page there too
+    const route = inject(ActivatedRoute);
+    this.parent = route.snapshot.queryParamMap.get('area') ?? undefined;
+    let first = true;
+    route.queryParamMap.subscribe((m) => { const a = m.get('area'); if (!first && a) this.open(a); first = false; });
   }
 
   ngAfterViewInit() {

@@ -207,7 +207,9 @@ const RESERVED = new Set(['RG', 'AC', 'RJ', 'TV']);
 
 export function encodeResultSms(r: Omit<ResultSms, 'kind'>): string {
   const parts = [`R1 ${r.puCode} V${r.version}`, `RG${r.registered}`, `AC${r.accredited}`, `RJ${r.rejected}`, `TV${r.totalValid}`];
+  // Parties with no votes are left out so the result fits in one SMS; the server fills them in as 0
   for (const [party, v] of Object.entries(r.votes)) {
+    if (!Number(v)) continue;
     const p = party.toUpperCase().replace(/[^A-Z]/g, '');
     if (!p || RESERVED.has(p) || p === 'K' || p === 'C' || p === 'V') throw new Error(`Party code not allowed in SMS: ${party}`);
     parts.push(`${p}${v}`);

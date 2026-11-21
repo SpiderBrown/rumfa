@@ -141,3 +141,15 @@ test('IReV: a sheet listed only on the dead thumbnail server has nothing to down
   expect(deadLinks(thumbOnly)).toEqual([thumbOnly.url]);
   expect(documentUrls({ url: 'https://inc-s3-cache.incportals.com/' })).toEqual([]);
 });
+
+test('a full ballot result fits in one SMS and reads back the same', () => {
+    const { encodeResultSms, decodeSms } = require('../shared');
+    const parties = ['A', 'AA', 'AAC', 'ADC', 'ADP', 'APC', 'APGA', 'APM', 'APP', 'BP', 'LP', 'NNPP', 'NRM', 'PDP', 'PRP', 'SDP', 'YPP', 'ZLP'];
+    const votes = Object.fromEntries(parties.map((p, i) => [p, i % 4 === 0 ? 0 : 100 + i * 7]));
+    const sms = encodeResultSms({ puCode: '19-28-02-003', version: 2, agentCode: '7F3A', registered: 1200, accredited: 845, rejected: 12, totalValid: 833, votes });
+    const d = decodeSms(sms);
+    expect(d).toMatchObject({ kind: 'result', puCode: '19-28-02-003', registered: 1200, accredited: 845, rejected: 12, totalValid: 833 });
+    for (const p of parties) expect(d.votes[p] ?? 0).toBe(votes[p]);
+    // 13 parties with votes: still about one text (multi-part SMS also works; this keeps cost and delay down)
+    expect(sms.length).toBeLessThanOrEqual(160);
+});

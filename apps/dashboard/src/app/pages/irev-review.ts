@@ -14,6 +14,10 @@ interface Sheet {
   total_valid: number | null; votes: Record<string, number>; confidence: Record<string, number> | null; sheet_pu_code: string | null;
   pu_name: string; pu_registered: number | null; ward_name: string; lga_name: string; state_name: string;
   election_name: string; election_type: string; election_date: string; from_link: boolean;
+  agent_check: 'asked' | 'matches' | 'differs' | null; agent_note: string | null;
+  /** Our agent's signed sheet for this unit, to compare with */
+  ours: { id: string; registered: number | null; accredited: number | null; rejected: number | null; total_valid: number | null; votes: Record<string, number>;
+          has_photo: boolean; submitted_at: string; by: string | null; has_full: boolean; full_requested_at: string | null } | null;
   ballots_received: number | null; unused: number | null; spoiled: number | null; used: number | null;
 }
 type Core = 'registered' | 'accredited' | 'rejected' | 'total_valid';
@@ -64,7 +68,8 @@ export function inWords(n: number | null | undefined): string {
   template: `
   <header class="head">
     <div><p class="eyebrow">IReV sheets the reader wasn't sure about</p><h1>Sheet review</h1>
-      <p class="lede">Read down the sheet and down the form together. Amber boxes are the ones the reader wasn't sure of.</p></div>
+      <p class="lede">Read down the sheet and down the form together. Amber boxes are the ones the reader wasn't sure of.
+        @if (byAgents()) { <br><b>{{ byAgents() }}</b> more were checked by our agents at the units and match their signed sheets, so they're not here. }</p></div>
     @if (queue().length) {
       <div class="nav">
         <button mat-icon-button (click)="step(-1)" [disabled]="queue().length < 2" aria-label="Previous sheet" matTooltip="Previous sheet"><mat-icon>chevron_left</mat-icon></button>
@@ -76,10 +81,29 @@ export function inWords(n: number | null | undefined): string {
 
   @if (loading()) { <p class="empty">Loading the review queue…</p> }
   @else if (cur(); as s) {
+    @if (s.agent_check === 'differs') {
+      <div class="agentsays"><mat-icon>report</mat-icon><span><b>Our agent at this unit says IReV is different from the sheet they signed</b>
+        @if (s.agent_note) { : "{{ s.agent_note }}" }. A case is open with the legal desk; type what IReV shows.</span></div>
+    } @else if (s.agent_check === 'asked') {
+      <div class="agentsays wait"><mat-icon>hourglass_top</mat-icon><span>Our agent at this unit has been asked to check this sheet and hasn't answered yet.</span></div>
+    }
     <div class="grid">
-      <section class="sheet" aria-label="The sheet from IReV">
-        @if (s.from_link) { <div class="src"><mat-icon aria-hidden="true">link</mat-icon> Shown from INEC's link. We don't keep a copy of this sheet.</div> }
-        <app-sheet-viewer [url]="imgUrl()" />
+      <section class="sheet" aria-label="The sheets">
+        @if (s.ours?.has_photo) {
+          <div class="r-seg which" role="tablist" aria-label="Which sheet">
+            <button type="button" role="tab" [class.on]="view() === 'irev'" (click)="showSheet('irev')">IReV copy</button>
+            <button type="button" role="tab" [class.on]="view() === 'ours'" (click)="showSheet('ours')">Our agent's photo</button>
+          </div>
+        }
+        @if (view() === 'ours') {
+          <div class="src"><mat-icon aria-hidden="true">photo_camera</mat-icon> Sent by {{ s.ours?.by ?? 'our agent' }} · {{ s.ours?.submitted_at | date: 'd MMM, HH:mm' }}
+            <span class="grow"></span>
+            @if (s.ours?.has_full) { <button mat-button type="button" (click)="oursFull()"><mat-icon>hd</mat-icon> Full resolution</button> }
+            @else if (s.ours?.full_requested_at || askedFull()) { <span class="xs">Full photo asked for</span> }
+            @else { <button mat-button type="button" (click)="askFull()"><mat-icon>hd</mat-icon> Ask for the full photo</button> }</div>
+        }
+        @else if (s.from_link) { <div class="src"><mat-icon aria-hidden="true">link</mat-icon> Shown from INEC's link. We don't keep a copy of this sheet.</div> }
+        <app-sheet-viewer [url]="view() === 'ours' ? oursUrl() : imgUrl()" />
       </section>
 
       <form class="paper" (submit)="$event.preventDefault(); confirm()" aria-label="Form EC8A figures" #paper>
@@ -112,6 +136,7 @@ export function inWords(n: number | null | undefined): string {
                      [placeholder]="it.optional ? '—' : ''" (ngModelChange)="setField(it.key, $event)" (keydown.enter)="next($event)"
                      [attr.aria-invalid]="itemBad(it.key)" [attr.aria-describedby]="unsure(it.key) ? 'unsure-note' : null" />
               @if (unsure(it.key)) { <span class="chk" aria-hidden="true">check</span> }
+              @if (oursOf(it.key); as o) { <span class="ours" [class.diff]="o.diff" [attr.title]="'On our agent sheet: ' + o.v">ours {{ o.v }}</span> }
             </li>
           }
         </ol>
@@ -127,7 +152,8 @@ export function inWords(n: number | null | undefined): string {
                 <td><span class="party"><i [style.background]="colourOf(p) ?? '#c9ced6'" aria-hidden="true"></i>{{ p }}</span></td>
                 <td class="fig"><input class="box" inputmode="numeric" autocomplete="off" [ngModel]="votes()[p] ?? ''" [name]="'v-' + p" placeholder="0"
                        [attr.aria-label]="p + ' votes in figures'" (ngModelChange)="setVote(p, $event)" (keydown.enter)="next($event)" />
-                  @if (unsure('votes.' + p)) { <span class="chk" aria-hidden="true">check</span> }</td>
+                  @if (unsure('votes.' + p)) { <span class="chk" aria-hidden="true">check</span> }
+                  @if (oursVote(p); as o) { <span class="ours" [class.diff]="o.diff">ours {{ o.v }}</span> }</td>
                 <td class="words">{{ inWords(votes()[p]) }}</td>
               </tr>
             }
@@ -146,12 +172,21 @@ export function inWords(n: number | null | undefined): string {
           @if (hasUnsure()) { <p id="unsure-note" class="note">Boxes marked <span class="chk inline">check</span> are where the reader wasn't sure. Compare them with the sheet.</p> }
         </div>
 
+        @if (s.ours) {
+          <div class="vs" [class.bad]="diffs().length" aria-live="polite">
+            @if (diffs().length) {
+              <mat-icon aria-hidden="true">warning</mat-icon>
+              <span><b>Different from our agent's sheet:</b> {{ diffs().slice(0, 4).join(' · ') }}{{ diffs().length > 4 ? ' and ' + (diffs().length - 4) + ' more' : '' }}.
+                Confirming what IReV shows opens a case for the legal desk. If our sheet is the one that's wrong, confirm anyway and say so on the case.</span>
+            } @else { <mat-icon aria-hidden="true">verified</mat-icon><span>Same as our agent's sheet so far.</span> }
+          </div>
+        }
         <div class="acts">
           <button mat-button type="button" (click)="step(1)" [disabled]="queue().length < 2">Skip for now</button>
           <span class="grow"></span>
           @if (missing().length) { <span class="miss">Fill {{ missing().join(', ') }} to confirm</span> }
           @else { <span class="kbd">Enter moves down · {{ mac ? '⌘ Return' : 'Ctrl + Enter' }} confirms</span> }
-          <button mat-flat-button type="submit" [disabled]="saving() || !complete()"><mat-icon>done_all</mat-icon> Confirm and next</button>
+          <button mat-flat-button type="submit" [disabled]="saving() || !complete()"><mat-icon>{{ diffs().length ? 'gavel' : 'done_all' }}</mat-icon> {{ diffs().length ? 'Confirm and open a legal case' : 'Confirm and next' }}</button>
         </div>
       </form>
     </div>
@@ -223,6 +258,13 @@ export function inWords(n: number | null | undefined): string {
     .acts { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 2px solid #1d1b16; }
     .grow { flex: 1; } .kbd { font-size: 11.5px; color: #6b6452; } .miss { font-size: 12px; font-weight: 600; color: #b54708; }
     tr.plain td { color: #8a8472; } tr.plain .party { font-weight: 600; } tr.plain .box { border-color: #d6d0bd; }
+    .which { margin-bottom: 8px; } .src .xs { font-size: 12px; font-weight: 600; } .src .grow { flex: 1; }
+    .ours { display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 700; color: var(--r-muted); white-space: nowrap; }
+    .ours.diff { color: #7a2e0b; background: var(--r-high-bg); border-radius: 999px; padding: 1px 7px; }
+    .vs { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #eef7f5; color: #0b5a54; font-size: 13.5px; }
+    .vs.bad { background: var(--r-high-bg); color: #7a2e0b; } .vs mat-icon { flex: none; }
+    .agentsays { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; background: #fdecea; color: #7a1d16; font-size: 13.5px; }
+    .agentsays.wait { background: #f3f7fb; color: var(--r-ink-2); }
     .done { text-align: center; padding: 60px 20px; color: var(--r-muted); } .done mat-icon { font-size: 48px; width: 48px; height: 48px; color: #c5ccd6; }
     .done h2 { color: var(--r-ink); margin: 8px 0 4px; }
     @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .sheet { position: static; } }
@@ -235,6 +277,8 @@ export class IrevReviewPage {
   readonly items = ITEMS;
   inWords = inWords;
   queue = signal<Sheet[]>([]);
+  /** Sheets taken off the queue because our agent at the unit confirmed IReV matches their signed sheet */
+  byAgents = signal(0);
   idx = signal(0);
   loading = signal(true);
   saving = signal(false);
@@ -243,6 +287,39 @@ export class IrevReviewPage {
   /** The election has no ballot list in Rumfa: all registered parties are shown, alphabetically */
   noBallot = signal(false);
   imgUrl = signal<string | null>(null);
+  oursUrl = signal<string | null>(null);
+  view = signal<'irev' | 'ours'>('irev');
+  /** Our agent's figure for an item, and whether what's typed differs */
+  oursOf(k: Key): { v: number; diff: boolean } | null {
+    const o = this.cur()?.ours; if (!o || !(k in o) || (o as any)[k] == null) return null;
+    const v = Number((o as any)[k]), typed = this.form()[k];
+    return { v, diff: typed != null && Number(typed) !== v };
+  }
+  oursVote(p: string): { v: number; diff: boolean } | null {
+    const o = this.cur()?.ours; if (!o) return null;
+    const v = Number(o.votes?.[p] ?? 0), typed = this.votes()[p] ?? 0;
+    return { v, diff: Number(typed) !== v };
+  }
+  /** Where the figures typed (what IReV shows) differ from our agent's sheet */
+  diffs = computed(() => {
+    const o = this.cur()?.ours; if (!o) return [] as string[];
+    const out: string[] = [];
+    for (const it of ITEMS) { const x = this.oursOf(it.key); if (x?.diff) out.push(`${it.label.split(' (')[0]} ${x.v} vs ${this.form()[it.key]}`); }
+    for (const p of this.parties()) { const x = this.oursVote(p); if (x?.diff) out.push(`${p} ${x.v} vs ${this.votes()[p] ?? 0}`); }
+    return out;
+  });
+  askedFull = signal(false);
+  async oursFull() { const o = this.cur()?.ours; if (o) this.oursUrl.set(await this.api.viewUrl({ kind: 'ec8a', id: o.id, full: true }).catch(() => this.oursUrl())); }
+  async askFull() {
+    const o = this.cur()?.ours; if (!o) return;
+    const ok = await this.ui.run(() => this.api.post(`/results/${o.id}/request-full-photo`), 'Asked. The full photo comes when the agent\'s phone is online.');
+    if (ok !== undefined) this.askedFull.set(true);
+  }
+  async showSheet(w: 'irev' | 'ours') {
+    this.view.set(w);
+    const s = this.cur();
+    if (w === 'ours' && s?.ours && !this.oursUrl()) this.oursUrl.set(await this.api.viewUrl({ kind: 'ec8a', id: s.ours.id }).catch(() => null));
+  }
   form = signal<Partial<Record<Key, number | null>>>({});
   votes = signal<Record<string, number | null>>({});
 
@@ -290,7 +367,11 @@ export class IrevReviewPage {
     this.loading.set(true);
     const elections = [this.api.liveElectionId(), this.api.baselineElectionId()].filter(Boolean) as string[];
     const lists = await Promise.all(elections.map((e) => this.api.get<Sheet[]>('/irev/review', { election: e }).catch(() => [])));
-    this.queue.set(lists.flat().slice(0, 200));
+    // Sheets our agents confirmed match their own are verified for us: nothing to type. Disputed ones (a case is open) first.
+    const all = lists.flat();
+    this.byAgents.set(all.filter((x) => x.agent_check === 'matches').length);
+    const rank = (x: Sheet) => (x.agent_check === 'differs' ? 0 : x.agent_check ? 2 : 1);
+    this.queue.set(all.filter((x) => x.agent_check !== 'matches').sort((a, b) => rank(a) - rank(b)).slice(0, 200));
     this.idx.set(0);
     this.loading.set(false);
     await this.show();
@@ -324,7 +405,7 @@ export class IrevReviewPage {
 
   async show() {
     const s = this.cur();
-    this.imgUrl.set(null);
+    this.imgUrl.set(null); this.oursUrl.set(null); this.view.set('irev'); this.askedFull.set(false);
     if (!s) return;
     let parties = await this.api.get<string[]>(`/elections/${s.election_id}/parties`).catch(() => [] as string[]);
     this.noBallot.set(!parties.length);

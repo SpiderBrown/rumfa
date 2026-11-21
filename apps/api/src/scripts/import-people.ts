@@ -4,7 +4,7 @@
 // Usage: node dist/scripts/import-people --tenant <uuid> --file agents.csv [--dry-run]
 import { randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { LEVELS, normaliseNgPhone, normalisePuCode, ROLES } from '../shared';
+import { checkPeopleRows } from '../common/people-rows';
 import { parseCsv } from './csv';
 import { arg, flag, log, withDb, type Q } from './run';
 
@@ -20,30 +20,7 @@ async function agentCode(q: Q, tenant: string, phone: string): Promise<string> {
 void withDb(async (q) => {
   const tenant = arg('--tenant'), file = arg('--file');
   if (!tenant || !file) throw new Error('Usage: --tenant <uuid> --file <csv> [--dry-run]');
-  const errors: string[] = [];
-  const ok: Record<string, any>[] = [];
-  const seen = new Set<string>();
-  for (const [i, r] of parseCsv(readFileSync(file, 'utf8')).entries()) {
-    const line = i + 2;
-    const phone = normaliseNgPhone(r.phone ?? '');
-    const role = (r.role || 'agent').toLowerCase();
-    const level = (r.level || (role === 'agent' ? 'pu' : '')).toLowerCase();
-    let area = r.area_code ?? '';
-    if (!r.full_name) { errors.push(`line ${line}: missing name`); continue; }
-    if (!phone) { errors.push(`line ${line}: bad phone ${r.phone}`); continue; }
-    if (seen.has(phone)) { errors.push(`line ${line}: duplicate phone ${phone}`); continue; }
-    if (!(ROLES as readonly string[]).includes(role)) { errors.push(`line ${line}: unknown role ${role}`); continue; }
-    if (!(LEVELS as readonly string[]).includes(level)) { errors.push(`line ${line}: unknown level ${level}`); continue; }
-    if (level === 'pu') {
-      const pu = normalisePuCode(area);
-      if (!pu) { errors.push(`line ${line}: bad polling unit code ${area}`); continue; }
-      area = pu;
-    }
-    if (level === 'national') area = 'NG';
-    seen.add(phone);
-    ok.push({ full_name: r.full_name, phone, role, level, area, email: r.email?.toLowerCase() || null,
-      languages: r.languages ? r.languages.split(/[;| ]+/) : ['en'], network: r.network ? r.network.toLowerCase() : null });
-  }
+  const { ok, problems: errors } = checkPeopleRows(parseCsv(readFileSync(file, 'utf8')));
   const pus = [...new Set(ok.filter((o) => o.level === 'pu').map((o) => o.area))];
   const found = new Set((await q(`select code from public.polling_units where code = any($1)`, [pus])).map((r) => r.code));
   for (const c of pus) if (!found.has(c)) errors.push(`unknown polling unit ${c}`);

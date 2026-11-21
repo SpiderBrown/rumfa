@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
-import { CurrentUser, Roles } from '../auth/decorators';
+import { Addon, CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn, selectFn } from '../common/fn';
@@ -32,7 +32,15 @@ export class CasesController {
        @Query('sinceHours') sinceHours?: string) {
     return withCasePlaces(this.db, await this.db.asUser(user, (q) => q(
       // alert_count: reports from automatic checks (no person), so "reports from people" can be told apart
-      `select c.*, (select count(*) from public.alerts a where a.case_id = c.id)::int as alert_count from public.cases c
+      // reporter: who reported it first; photos: how many photos and videos came with the reports; thumb: the first photo
+      `select c.*, (select count(*) from public.alerts a where a.case_id = c.id)::int as alert_count,
+              (select json_build_object('name', v.full_name, 'role', v.role) from public.incidents i join public.volunteers v on v.id = i.volunteer_id
+                where i.case_id = c.id order by i.reported_at limit 1) as reporter,
+              (select coalesce(sum(coalesce(array_length(i.media_paths, 1), 0)), 0)::int from public.incidents i where i.case_id = c.id) as photos,
+              (select json_build_object('kind', 'incident', 'id', i.id, 'index', m.n - 1) from public.incidents i,
+                      unnest(i.media_paths) with ordinality m(path, n)
+                where i.case_id = c.id and m.path ~* '\.(jpe?g|png|webp|heic)$' order by i.reported_at, m.n limit 1) as thumb
+         from public.cases c
         where tenant_id = $1
           and ($2::text is null or status = any(string_to_array($2, ',')))
           and ($3::uuid is null or queue_id = $3)
@@ -89,7 +97,13 @@ export class CasesController {
             and area_code like $4 || '%' order by created_at desc limit 20`,
         [user.tid, c.category, id, c.area_code.slice(0, 8)]) : [];
       const [placed] = await withCasePlaces(this.db, [c]);
-      return { case: placed, incidents, alerts, events, suggestions, channelId: channel?.id ?? null, messages, liveView: liveView ?? null,
+      // Where it moves up to when time runs out (never past the client's seat), its queue, and the unit's voters
+      const [more] = await q(
+        `select (select name from public.queues where id = $1) as queue_name, (select kind from public.queues where id = $1) as queue_kind,
+                (select name from public.queues where id = app.top_queue($2, $3)) as top_room, app.top_queue($2, $3) = $1 as at_top,
+                (select registered_voters from public.polling_units where code = $4) as registered`,
+        [c.queue_id, user.tid, c.pu_code ?? c.area_code, c.pu_code]);
+      return { case: { ...placed, ...more }, incidents, alerts, events, suggestions, channelId: channel?.id ?? null, messages, liveView: liveView ?? null,
                latestResult: result ?? null, people, contacts, mergeTargets: await withCasePlaces(this.db, mergeTargets) };
     });
   }
@@ -137,7 +151,7 @@ export class CasesController {
   @Post('case-suggestions/:id/decide') @HttpCode(204) @Roles(...SUPERVISORS)
   async decide(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() b: DecideDto) { await this.act(u, 'decide_suggestion', { p_suggestion: id, p_accept: b.accept }); }
 
-  @Post('cases/:id/live-view') @Roles(...ROOM)
+  @Post('cases/:id/live-view') @Roles(...ROOM) @Addon('liveVideo')
   @ApiOperation({ summary: 'Ask the agent at the unit to show it on video' })
   async liveView(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() b: LiveViewDto) {
     return { requestId: await this.act(u, 'request_live_view', { p_case: id, p_agent: b.agentId }) };

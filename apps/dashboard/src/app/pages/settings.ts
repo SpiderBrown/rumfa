@@ -17,6 +17,7 @@ interface Rules {
   callbacks: { unitMin: number; otherMin: number; retryMin: number };
   alerts: { smsAfterMin: number };
   results: { estimateMinUnits: number; estimatePct: number };
+  staffing: { useShifts: boolean; autoAssign: boolean };
 }
 interface Category { code: string; label: string; severity: Sev; queue: Kind }
 interface CallSettings { phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }
@@ -31,6 +32,7 @@ const KINDS: { k: Kind; label: string }[] = [
   { k: 'security', label: 'Security' }, { k: 'legal', label: 'Legal' }, { k: 'state', label: 'State room' },
   { k: 'helpdesk', label: 'Helpdesk' }, { k: 'national', label: 'National room' }];
 const SECTIONS = [
+  { id: 'staffing', icon: 'assignment_ind', text: 'Shifts and assigning' },
   { id: 'timings', icon: 'timer', text: 'Case timings' },
   { id: 'routing', icon: 'alt_route', text: 'Where reports go' },
   { id: 'team', icon: 'diversity_3', text: 'Field team' },
@@ -74,9 +76,25 @@ const SECTIONS = [
     </nav>
 
     <div class="sections">
+      <section class="r-card" id="staffing">
+        <div class="sh"><div><h2>Shifts and assigning</h2>
+          <p class="hint">Who works each queue, and whether new cases are handed out for you.</p></div>
+          <button mat-button (click)="resetGroup('staffing')">Use Rumfa defaults</button></div>
+        <div class="rows">
+          <div class="row"><div><b>Use shifts</b>
+            <p class="hint">@if (r.staffing.useShifts) { On: a queue's people are those on shift for it right now. Set shifts under Shifts and queues. }
+              @else { Off: everyone whose role fits works the queue: Security staff the Security desk, Legal the Legal desk, operators the rooms and Helpdesk. Supervisors and admins work all of them. }</p></div>
+            <mat-slide-toggle aria-label="Use shifts" [checked]="r.staffing.useShifts" (change)="setStaffing('useShifts', $event.checked)" /></div>
+          <div class="row"><div><b>Assign cases automatically</b>
+            <p class="hint">@if (r.staffing.autoAssign) { On: a new case goes straight to the least busy person who is Available on that queue. }
+              @else { Off: cases wait in their queue. A supervisor assigns them, or staff take them from their own queues with Take next. }</p></div>
+            <mat-slide-toggle aria-label="Assign cases automatically" [checked]="r.staffing.autoAssign" (change)="setStaffing('autoAssign', $event.checked)" /></div>
+        </div>
+      </section>
+
       <section class="r-card" id="timings">
         <div class="sh"><div><h2>Case timings</h2>
-          <p class="hint">How long the person given a case has to take it, and how long until it must be resolved. Not taken in time: it goes to someone else on shift and supervisors are told.</p>
+          <p class="hint">How long the person given a case has to take it, and how long until it must be resolved. Not taken in time: it goes to someone else free and supervisors are told.</p>
           <p class="hint top"><mat-icon aria-hidden="true">vertical_align_top</mat-icon> Your seat is at <b>{{ levelName(a.hierarchy.level) }}</b> level, so cases go no higher than <b>{{ a.hierarchy.topRoom ?? 'your room' }}</b>.</p></div>
           <button mat-button (click)="resetGroup('cases')">Use Rumfa defaults</button></div>
         <table class="grid">
@@ -302,10 +320,11 @@ export class SettingsPage {
       silentMin: 'silent after', turnoutMin: 'no turnout after', snoozeMin: 'come back after', unitMin: 'unit callbacks', otherMin: 'other callbacks',
       retryMin: 'retry after', smsAfterMin: 'SMS after', estimateMinUnits: 'units for estimate', estimatePct: 'share for estimate',
       national: 'move up', up: 'move up', stay: 'keep and alert', default: 'default',
+      useShifts: 'use shifts', autoAssign: 'assign automatically', true: 'on', false: 'off',
     };
     const label = (this.all()?.categories ?? []).reduce((m, x) => ({ ...m, [x.code]: x.label }), {} as Record<string, string>);
     const [path, val] = c.split(': ');
-    const parts = path.split('.').filter((p) => !['cases', 'routing', 'team', 'callbacks', 'alerts', 'results'].includes(p));
+    const parts = path.split('.').filter((p) => !['cases', 'routing', 'team', 'callbacks', 'alerts', 'results', 'staffing'].includes(p));
     const v = (val ?? '').split(' → ').map((x) => words[x] ?? x).join(' → ');
     return `${parts.map((p) => label[p] ?? words[p] ?? this.cap(p)).join(', ')}: ${v}`;
   };
@@ -321,6 +340,7 @@ export class SettingsPage {
       if (o.queue || o.severity) r.routing[c.code] = o; else delete r.routing[c.code];
     });
   }
+  setStaffing(k: 'useShifts' | 'autoAssign', on: boolean) { this.edit((r) => { r.staffing[k] = on; }); }
   unroute(code: string) { this.edit((r) => { delete r.routing[code]; }); }
   resetGroup(g: keyof Rules) { const d = this.all()?.defaults; if (d) this.edit((r) => { (r as any)[g] = structuredClone(d[g]); }); }
   discard() { const a = this.all(); if (a) this.draft.set(structuredClone(a.rules)); }

@@ -41,7 +41,7 @@ export class ShiftsController {
     return this.db.asUser(u, (q) => q(
       `select s.*, v.full_name, qu.name as queue_name from public.shifts s
          join public.volunteers v on v.id = s.volunteer_id join public.queues qu on qu.id = s.queue_id
-        where s.tenant_id = $1 and s.ends_at >= now() order by s.starts_at limit 2000`, [u.tid]));
+        where s.tenant_id = $1 and s.ends_at >= date_trunc('day', now() at time zone 'Africa/Lagos') at time zone 'Africa/Lagos' order by s.starts_at limit 2000`, [u.tid]));
   }
 
   @Post('shifts') @Roles('supervisor', 'admin')
@@ -170,7 +170,9 @@ export class VoiceController {
   @Get('campaigns')
   campaigns(@CurrentUser() u: AuthUser) {
     return this.db.asUser(u, (q) => q(
-      `select c.*, (select json_object_agg(status, n) from (select status, count(*) n from public.voice_call_attempts a where a.campaign_id = c.id group by status) s) as counts
+      `select c.*, (select json_object_agg(status, n) from (select status, count(*) n from public.voice_call_attempts a where a.campaign_id = c.id group by status) s) as counts,
+              (select count(distinct a.contact_id)::int from public.voice_call_attempts a where a.campaign_id = c.id and a.status in ('answered','completed')) as reached,
+              (select round(avg(a.duration_s))::int from public.voice_call_attempts a where a.campaign_id = c.id and a.status in ('answered','completed') and a.duration_s > 0) as avg_listen_s
          from public.voice_campaigns c where c.tenant_id = $1 order by c.created_at desc`, [u.tid]));
   }
 

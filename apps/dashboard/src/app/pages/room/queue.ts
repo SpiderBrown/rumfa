@@ -4,29 +4,26 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from '../../core/api';
-import { AgoPipe, Ui, minutesText as fmtMin, placeLine, reportsLine, type CasePlace } from '../../core/ui';
+import { AgoPipe, Ui, label, minutesText as fmtMin, placeLine, reportsLine, type CasePlace } from '../../core/ui';
 import { AreaMap, type MapArea, type MapData } from '../../core/area-map';
 import { CaseDetailPage } from './case-detail';
+import { RefImg } from '../../core/media';
+import { OTHER_QUEUE, QUEUE_KIND } from '../../core/queues';
 
 export interface CaseRow {
   id: string; title: string; what?: string | null; where?: CasePlace | null; category: string; severity: string; status: string; pu_code: string | null; area_code: string;
   report_count: number; reporter_count: number; alert_count?: number; assigned_to: string | null; queue_id: string; created_at: string;
-  ack_due_at: string | null; due_at: string | null; escalation_level: number; incident_group_id: string | null;
+  ack_due_at: string | null; due_at: string | null; escalation_level: number; incident_group_id: string | null; updated_at?: string;
+  reporter?: { name: string; role: string } | null; photos?: number; thumb?: Record<string, unknown> | null;
 }
 interface QueueCount { queue_id: string; name: string; kind: string; waiting: number; assigned: number; overdue: number; critical: number }
 
 const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const SEV_LABEL: Record<string, string> = { critical: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' };
-/** Each kind of queue has its colour, used on its card, its group and its cases */
-const KIND: Record<string, { colour: string; hint: string; order: number }> = {
-  security: { colour: '#a1251b', hint: 'Violence, thugs, snatching', order: 0 },
-  legal: { colour: '#5b3fa8', hint: 'Results, agent denied, vote buying', order: 1 },
-  state: { colour: '#1f4e8c', hint: 'Materials, BVAS, voters turned away', order: 2 },
-  helpdesk: { colour: '#0f766e', hint: 'App, phone, forms', order: 3 },
-  national: { colour: '#3d4652', hint: 'Escalated from the states', order: 4 },
-};
-const OTHER = { colour: '#5b6675', hint: '', order: 9 };
+const KIND = QUEUE_KIND;
+const OTHER = OTHER_QUEUE;
 const CLOSED = ['resolved', 'closed', 'merged'];
+type View = 'open' | 'urgent' | 'mine' | 'untaken' | 'resolved';
 
 /**
  * The situation room: queues by kind of case across the top, the cases grouped by queue on the left (or on a
@@ -34,11 +31,12 @@ const CLOSED = ['resolved', 'closed', 'merged'];
  */
 @Component({
   selector: 'app-queue',
-  imports: [MatButtonModule, MatIconModule, MatTooltipModule, AgoPipe, CaseDetailPage],
+  imports: [MatButtonModule, MatIconModule, MatTooltipModule, AgoPipe, CaseDetailPage, RefImg],
   template: `
   <div class="room">
     <header class="head">
       <div>
+        <p class="eyebrow">{{ onShiftLine() }}</p>
         <h1>Situation room</h1>
         <p class="sub">{{ subtitle() }}</p>
       </div>
@@ -61,7 +59,7 @@ const CLOSED = ['resolved', 'closed', 'merged'];
             <span class="q-nums"><b>{{ q.waiting }}</b> waiting
               @if (q.critical) { <span class="urgent">{{ q.critical }} urgent</span> }
               @if (q.overdue) { <span class="over">{{ q.overdue }} over time</span> }</span>
-            <span class="q-hint">{{ q.assigned }} being worked</span>
+            <span class="q-hint">{{ q.assigned }} being worked · {{ workers(q.queue_id) }}</span>
           </button>
           <div class="q-foot"><button mat-button (click)="takeNext(q.queue_id)" [disabled]="!q.waiting">Take next</button></div>
         </div>
@@ -78,13 +76,14 @@ const CLOSED = ['resolved', 'closed', 'merged'];
       </div>
     }
 
-    <div class="body">
+    <div class="body" [class.none]="!id()">
       <!-- Left: the cases -->
       <section class="list" aria-label="Cases">
         <div class="tools">
-          <div class="r-seg" role="tablist" aria-label="Which cases">
+          <div class="filters" role="tablist" aria-label="Which cases">
             @for (t of tabs; track t.id) {
-              <button role="tab" [class.on]="view() === t.id" [attr.aria-selected]="view() === t.id" (click)="setView(t.id)">{{ t.label }}</button>
+              <button role="tab" class="fchip r-focus" [class.on]="view() === t.id" [attr.aria-selected]="view() === t.id" (click)="setView(t.id)">
+                {{ t.label }} <b>{{ countOf(t.id) }}</b></button>
             }
           </div>
           <div class="r-seg" role="tablist" aria-label="Show as">
@@ -113,15 +112,21 @@ const CLOSED = ['resolved', 'closed', 'merged'];
             <h2 class="g-head"><span class="dot" [style.background]="g.colour" aria-hidden="true"></span>{{ g.name }}<span class="g-count">· {{ g.cases.length }}</span></h2>
             @for (c of g.cases; track c.id) {
               <button class="case r-focus" [class.cur]="c.id === id()" [style.--k]="g.colour" (click)="select(c.id)" [attr.aria-current]="c.id === id() ? 'true' : null">
-                <span class="c-top">
-                  <span class="r-pill" [class]="c.severity">{{ sevLabel[c.severity] }}</span>
-                  <span class="muted sm">{{ c.created_at | ago }}</span>
-                  <span class="due" [class]="dueClass(c)">{{ dueText(c) }}</span>
+                <span class="c-main">
+                  <span class="c-top">
+                    <span class="r-pill" [class]="c.severity">{{ sevLabel[c.severity] }}</span>
+                    <span class="c-title">{{ c.what ?? c.title }}
+                      @if (c.incident_group_id) { <mat-icon class="link" matTooltip="Linked with other cases as one incident">link</mat-icon> }</span>
+                  </span>
+                  <span class="muted sm">{{ place(c) }}{{ c.reporter ? ' · from ' + short(c.reporter.name) + ' (' + roleWord(c.reporter.role) + ')' : ' · ' + reports(c) }}</span>
+                  <span class="c-foot sm">
+                    <span class="due" [class]="dueClass(c)"><mat-icon aria-hidden="true">timer</mat-icon>{{ dueText(c) }}</span>
+                    <span class="c-owner">{{ owner(c) }}</span>
+                    @if (c.photos) { <span class="muted ph"><mat-icon aria-hidden="true">photo_camera</mat-icon>{{ c.photos }}</span> }
+                    <span class="muted ago">{{ c.created_at | ago }}</span>
+                  </span>
                 </span>
-                <span class="c-title">{{ c.what ?? c.title }}
-                  @if (c.incident_group_id) { <mat-icon class="link" matTooltip="Linked with other cases as one incident">link</mat-icon> }</span>
-                <span class="muted sm">{{ place(c) }} · {{ reports(c) }}</span>
-                <span class="c-owner sm">{{ owner(c) }}</span>
+                @if (c.thumb && !id()) { <app-ref-img class="thumb" [ref]="c.thumb" /> }
               </button>
             }
           </div>
@@ -148,6 +153,15 @@ const CLOSED = ['resolved', 'closed', 'merged'];
     .room { display: flex; flex-direction: column; gap: 16px; max-width: 1600px; }
     .head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
     h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+    .eyebrow { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--r-muted); }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fchip { border: 1px solid var(--r-line); background: #fff; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--r-ink-2); cursor: pointer; }
+    .fchip b { margin-left: 2px; } .fchip.on { background: var(--r-ink); border-color: var(--r-ink); color: #fff; }
+    .c-main { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+    .c-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .c-foot mat-icon { font-size: 15px; width: 15px; height: 15px; vertical-align: -3px; margin-right: 3px; }
+    .ph, .ago { font-size: 12px; } .ago { margin-left: auto; }
+    .thumb { --w: 84px; --h: 62px; }
     .sub { margin: 4px 0 0; color: var(--r-muted); font-size: 13px; font-weight: 600; }
     .head-r { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .stat { display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 12px; border-radius: 999px; background: #fff; border: 1px solid var(--r-line); font-size: 13px; }
@@ -176,10 +190,12 @@ const CLOSED = ['resolved', 'closed', 'merged'];
     /* The case stays in view while the list scrolls */
     .detail { flex: 999 1 560px; min-width: 0; position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow: auto; border-radius: var(--r-radius); }
     @media (max-width: 900px) { .detail { position: static; max-height: none; } }
+    /* Nothing open yet: the list gets the room, the hint stays narrow */
+    .body.none .list { flex: 1 1 620px; } .body.none .detail { flex: 0 1 380px; }
     .tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .r-seg .i { font-size: 16px; width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
     .map-wrap { background: #fff; border: 1px solid var(--r-line); border-radius: 12px; padding: 8px; }
-    .map { height: 280px; border-radius: 8px; }
+    .map { height: 420px; border-radius: 8px; }
     .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 13px; padding: 2px 4px 8px; }
     .crumb { border: 0; background: none; color: #0f5e8c; font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
     .crumb:hover { background: #eaf2f8; }
@@ -188,14 +204,14 @@ const CLOSED = ['resolved', 'closed', 'merged'];
     .group { display: flex; flex-direction: column; gap: 8px; }
     .g-head { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--r-ink-2); }
     .g-count { font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--r-muted); }
-    .case { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; font: inherit; color: var(--r-ink); cursor: pointer;
+    .case { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font: inherit; color: var(--r-ink); cursor: pointer;
       background: #fff; border: 1px solid var(--r-line); border-left: 4px solid var(--k); border-radius: 12px; padding: 11px 13px; }
     .case:hover { border-color: #9aa6b6; border-left-color: var(--k); }
     .case.cur { background: var(--r-accent-soft); outline: 2px solid var(--r-accent); outline-offset: -1px; }
     .c-top { display: flex; align-items: center; gap: 8px; }
-    .due { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--r-muted); }
+    .due { font-size: 12.5px; font-weight: 700; color: var(--r-muted); white-space: nowrap; }
     .due.soon { color: var(--r-high); } .due.late { color: var(--r-urgent); } .due.done { color: var(--r-accent-strong); }
-    .c-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
+    .c-title { font-size: 15px; font-weight: 700; line-height: 1.3; min-width: 0; }
     .link { font-size: 16px; width: 16px; height: 16px; vertical-align: -3px; color: var(--r-muted); }
     .c-owner { color: var(--r-ink-2); }
     .empty, .pick { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 40px 24px; }
@@ -211,11 +227,44 @@ export class QueuePage implements OnDestroy {
   private ui = inject(Ui);
   private router = inject(Router);
   readonly sevLabel = SEV_LABEL;
-  readonly tabs = [{ id: 'mine' as const, label: 'My cases' }, { id: 'open' as const, label: 'All open' }, { id: 'closed' as const, label: 'Closed' }];
+  readonly tabs = [{ id: 'open' as const, label: 'Open' }, { id: 'urgent' as const, label: 'Urgent' }, { id: 'mine' as const, label: 'Mine' },
+    { id: 'untaken' as const, label: 'Not taken' }, { id: 'resolved' as const, label: 'Resolved today' }];
 
-  view = signal<'mine' | 'open' | 'closed'>('open');
+  view = signal<View>('open');
+  /** Open cases (Open, Urgent, Mine and Not taken are views of these) and today's resolved ones */
+  openCases = signal<CaseRow[]>([]);
+  resolvedCases = signal<CaseRow[]>([]);
+  roomStaff = signal<{ id: string; full_name: string; status: string; on_shift: boolean; queues?: string[] }[]>([]);
   queueFilter = signal<string | null>(null);
-  cases = signal<CaseRow[]>([]);
+  cases = computed(() => {
+    const me = this.api.me()?.id, v = this.view();
+    if (v === 'resolved') return this.resolvedCases();
+    return this.openCases().filter((c) => v === 'open' || (v === 'urgent' && c.severity === 'critical') || (v === 'mine' && c.assigned_to === me)
+      || (v === 'untaken' && !c.assigned_to));
+  });
+  countOf(v: View) {
+    const me = this.api.me()?.id, all = this.openCases();
+    switch (v) {
+      case 'open': return all.length;
+      case 'urgent': return all.filter((c) => c.severity === 'critical').length;
+      case 'mine': return all.filter((c) => c.assigned_to === me).length;
+      case 'untaken': return all.filter((c) => !c.assigned_to).length;
+      default: return this.resolvedCases().length;
+    }
+  }
+  onShiftLine = computed(() => {
+    const s = this.roomStaff(); if (!s.length) return 'Room';
+    const useShifts = this.api.staffing().useShifts;
+    const n = useShifts ? s.filter((x) => x.on_shift).length : s.filter((x) => x.status === 'available').length;
+    return `${this.api.brand()} room · ${n} ${useShifts ? 'on shift' : 'available'}`;
+  });
+  /** "Ibrahim S., Bashir A." working a queue now */
+  workers(queueId: string) {
+    const names = this.roomStaff().filter((x) => x.queues?.includes(queueId) && x.status === 'available').map((x) => this.short(x.full_name));
+    return names.length ? names.length > 2 ? `${names.length} free` : names.join(', ') : 'nobody free';
+  }
+  short(n: string) { const [a, b] = n.split(' '); return b ? `${a} ${b[0]}.` : a; }
+  roleWord(r: string) { return ({ agent: 'agent', volunteer: 'volunteer', coordinator: 'coord.' } as Record<string, string>)[r] ?? label(r).toLowerCase(); }
   queues = signal<QueueCount[]>([]);
   staff = signal<Record<string, string>>({});
   mapMode = signal(false);
@@ -264,8 +313,10 @@ export class QueuePage implements OnDestroy {
   constructor() {
     void this.load();
     void this.loadCounts();
-    void this.api.get<{ id: string; full_name: string }[]>('/people/room-staff').then((s) =>
-      this.staff.set(Object.fromEntries(s.map((x) => [x.id, x.full_name])))).catch(() => {});
+    void this.api.get<any[]>('/people/room-staff').then((s) => {
+      this.roomStaff.set(s);
+      this.staff.set(Object.fromEntries(s.map((x) => [x.id, x.full_name])));
+    }).catch(() => {});
     // Live: any case change in my area reloads the list (a burst of changes reloads once)
     let pending: ReturnType<typeof setTimeout> | null = null;
     this.stopLive = this.api.onChange(() => {
@@ -285,15 +336,20 @@ export class QueuePage implements OnDestroy {
   ngOnDestroy() { clearInterval(this.timer); clearInterval(this.countsTimer); this.stopLive(); this.areaMap?.destroy(); }
 
   async load() {
-    const v = this.view();
-    const q = v === 'mine' ? { mine: true, status: 'assigned,in_progress,escalated,resolved' }
-      : v === 'open' ? { status: 'queued,assigned,in_progress,escalated' }
-      : { status: 'resolved,closed,merged', sinceHours: 6 };
-    try { this.cases.set(await this.api.get<CaseRow[]>('/cases', q)); } catch (e) { this.ui.error(e); }
+    // Since midnight in Lagos, for Resolved today
+    const now = new Date(Date.now() + 3_600_000);
+    const sinceHours = Math.max(1, Math.ceil(now.getUTCHours() + now.getUTCMinutes() / 60));
+    try {
+      const [open, done] = await Promise.all([
+        this.api.get<CaseRow[]>('/cases', { status: 'queued,assigned,in_progress,escalated' }),
+        this.api.get<CaseRow[]>('/cases', { status: 'resolved,closed,merged', sinceHours }),
+      ]);
+      this.openCases.set(open); this.resolvedCases.set(done);
+    } catch (e) { this.ui.error(e); }
   }
   async loadCounts() { this.queues.set(await this.api.get<QueueCount[]>('/queues/counts').catch(() => this.queues())); }
 
-  setView(v: 'mine' | 'open' | 'closed') { this.view.set(v); void this.load(); }
+  setView(v: View) { this.view.set(v); }
   toggleQueue(id: string) { this.queueFilter.set(this.queueFilter() === id ? null : id); }
   select(id: string) { void this.router.navigate(['/room/case', id]); }
 
@@ -351,10 +407,12 @@ export class QueuePage implements OnDestroy {
     const min = (new Date(d).getTime() - Date.now()) / 60_000;
     return min < 0 ? 'due late' : min < 10 ? 'due soon' : 'due';
   }
-  emptyTitle() { return this.view() === 'mine' ? 'No cases on you' : this.view() === 'closed' ? 'Nothing closed in the last 6 hours' : 'No open cases'; }
+  emptyTitle() {
+    return ({ mine: 'No cases on you', resolved: 'Nothing resolved today yet', urgent: 'No urgent cases', untaken: 'Every case has someone on it' } as Record<string, string>)[this.view()] ?? 'No open cases';
+  }
   emptyText() {
     if (this.queueFilter() || this.area()) return 'Try all queues or all areas.';
-    return this.view() === 'mine' ? 'Take the next case when you are ready.' : 'New reports from the field appear here as they come in.';
+    return this.view() === 'mine' ? 'Take the next case when you are ready.' : this.view() === 'open' ? 'New reports from the field appear here as they come in.' : '';
   }
 
   async takeNext(queueId: string | null) {

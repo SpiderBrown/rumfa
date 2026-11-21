@@ -21,6 +21,9 @@ export interface Rules {
   callbacks: { unitMin: number; otherMin: number; retryMin: number };
   alerts: { smsAfterMin: number };
   results: { estimateMinUnits: number; estimatePct: number };
+  /** useShifts: cases go to people on shift for the queue (off: to anyone whose role fits it).
+   *  autoAssign: new cases go straight to someone free (off: they wait for a supervisor or someone to take them). */
+  staffing: { useShifts: boolean; autoAssign: boolean };
 }
 
 export const DEFAULT_RULES: Rules = {
@@ -36,6 +39,7 @@ export const DEFAULT_RULES: Rules = {
   callbacks: { unitMin: 5, otherMin: 10, retryMin: 5 },
   alerts: { smsAfterMin: 30 },
   results: { estimateMinUnits: 20, estimatePct: 5 },
+  staffing: { useShifts: true, autoAssign: true },
 };
 
 /** Allowed range for each number, by path. */
@@ -75,7 +79,9 @@ export function rulesOf(settings: any): Rules {
   }
   const group = <K extends 'team' | 'callbacks' | 'alerts' | 'results'>(k: K): Rules[K] =>
     Object.fromEntries(Object.entries(DEFAULT_RULES[k]).map(([f, d]) => [f, num(r[k]?.[f], d as number, `${k}.${f}`)])) as Rules[K];
-  return { cases, routing, team: group('team'), callbacks: group('callbacks'), alerts: group('alerts'), results: group('results') };
+  const bool = (v: any, d: boolean) => (typeof v === 'boolean' ? v : d);
+  const staffing = { useShifts: bool(r.staffing?.useShifts, true), autoAssign: bool(r.staffing?.autoAssign, true) };
+  return { cases, routing, team: group('team'), callbacks: group('callbacks'), alerts: group('alerts'), results: group('results'), staffing };
 }
 
 /**
@@ -109,6 +115,9 @@ export function rulesProblems(r: any): string[] {
     'callbacks.unitMin': 'Callback about a polling unit', 'callbacks.otherMin': 'Other callbacks', 'callbacks.retryMin': 'Retry a missed callback after',
     'alerts.smsAfterMin': 'SMS after', 'results.estimateMinUnits': 'Units needed for an estimate', 'results.estimatePct': 'Share of units needed for an estimate',
   };
+  for (const k of ['useShifts', 'autoAssign']) {
+    if (typeof r.staffing?.[k] !== 'boolean') out.push(k === 'useShifts' ? 'Choose whether to use shifts' : 'Choose whether to assign cases automatically');
+  }
   for (const [path, label] of Object.entries(labels)) {
     const [k, f] = path.split('.');
     check(r[k]?.[f], path, label);

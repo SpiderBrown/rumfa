@@ -38,6 +38,7 @@ const ZONE_NAME: Record<string, string> = { NC: 'North Central', NE: 'North East
   template: `
   <div class="page">
     <div class="page-head">
+      <p class="eyebrow">States, LGAs, wards, polling units</p>
       <h1>Places</h1>
       <span class="spacer"></span>
       @if (api.canEdit) {
@@ -71,6 +72,16 @@ const ZONE_NAME: Record<string, string> = { NC: 'North Central', NE: 'North East
       <button mat-icon-button (click)="panel.set(panel() === 'history' ? null : 'history')" matTooltip="Import history: past loads and their logs"><mat-icon>history</mat-icon></button>
     </div>
 
+    @if (states().length) {
+      <div class="kpis">
+        <div class="kpi"><span class="k-l">States complete</span><b>{{ tot().ready }} of {{ states().length }}</b>
+          <span class="k-h">{{ tot().partial.length ? tot().partial.slice(0, 3).join(', ') + (tot().partial.length > 3 ? ' and ' + (tot().partial.length - 3) + ' more' : '') + ' partial' : 'all ready' }}</span></div>
+        <div class="kpi"><span class="k-l">LGAs</span><b>{{ tot().lgas | number }}</b><span class="k-h">of 774</span></div>
+        <div class="kpi"><span class="k-l">Wards</span><b>{{ tot().wards | number }}</b><span class="k-h">of 8,809</span></div>
+        <div class="kpi"><span class="k-l">Polling units</span><b>{{ tot().units | number }}</b><span class="k-h">of 176,846</span></div>
+        <div class="kpi"><span class="k-l">Voters loaded</span><b>{{ votersText() }}</b><span class="k-h">{{ tot().withVoters | number }} units with a register figure</span></div>
+      </div>
+    }
     @if (panel() === 'irev') {
       <div class="card">
         <h2>Places from IReV only</h2>
@@ -284,6 +295,14 @@ export class PlacesPage implements OnDestroy {
 
   level = computed(() => { const p = this.data()?.parent ?? 'NG'; return p === 'NG' ? 'NG' : p.length === 2 ? 'state' : p.length === 5 ? 'lga' : 'ward'; });
   running = computed(() => this.jobs().some((j) => j.status === 'running'));
+  /** Totals over every state, for the tiles on top */
+  tot = computed(() => {
+    const st = this.states();
+    return { ready: st.filter((x) => x.status === 'ready').length, partial: st.filter((x) => x.status === 'attention').map((x) => x.name),
+      lgas: st.reduce((n, x) => n + Number(x.lgas ?? 0), 0), wards: st.reduce((n, x) => n + Number(x.wards ?? 0), 0), units: st.reduce((n, x) => n + Number(x.units ?? 0), 0),
+      voters: st.reduce((n, x) => n + Number(x.voters ?? 0), 0), withVoters: st.reduce((n, x) => n + Number(x.with_voters ?? 0), 0) };
+  });
+  votersText() { const v = this.tot().voters; return v >= 1e6 ? (v / 1e6).toFixed(1) + ' m' : v.toLocaleString(); }
 
   constructor() { void this.open('NG'); void this.loadJobs(); }
   ngOnDestroy() { clearTimeout(this.timer); }

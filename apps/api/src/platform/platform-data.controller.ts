@@ -79,6 +79,9 @@ export class PlatformDataController {
     const rows = await this.db.system(
       `select p.acronym, p.name, p.colour, p.logo_version, p.updated_at,
               (select count(*) from public.election_parties ep where ep.party = p.acronym)::int as elections,
+              (select coalesce(json_agg(json_build_object('name', e.name, 'state', st.name, 'date', e.election_date) order by e.election_date desc), '[]')
+                 from public.election_parties ep join public.elections e on e.id = ep.election_id left join public.states st on st.code = e.scope_state_code
+                where ep.party = p.acronym) as ballots,
               (select count(*) from public.tenants t where t.party = p.acronym)::int as clients
          from public.parties p order by p.acronym`);
     return rows.map(({ logo_version, ...p }) => ({ ...p, logoUrl: logoUrl(p.acronym, logo_version) }));

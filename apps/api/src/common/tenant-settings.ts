@@ -52,13 +52,16 @@ export function ownParty(settings: any): string | null {
 }
 
 /**
- * Premium add-ons, switched on per client in Rumfa Console (tenants.settings.addons). Off unless switched on.
- *  - voice:   Voice outreach (recorded messages called out to supporters)
- *  - airtime: Airtime and data top-ups for field people
+ * Add-ons, switched per client in Rumfa Console (tenants.settings.addons).
+ *  - voice:        Voice outreach (recorded messages called out to supporters). Off unless switched on.
+ *  - airtime:      Airtime and data top-ups for field people. Off unless switched on.
+ *  - liveVideo:    The room can ask an agent to stream live video from the unit. On unless switched off.
+ *  - sheetReading: Rumfa reads the figures from agents' EC8A photos automatically. On unless switched off.
+ * liveVideo and sheetReading were part of every client before they became switches, so they stay on by default.
  */
-export type Addon = 'voice' | 'airtime';
-export const ADDONS: Record<Addon, string> = { voice: 'Voice outreach', airtime: 'Airtime and data' };
+export type Addon = 'voice' | 'airtime' | 'liveVideo' | 'sheetReading';
+export const ADDONS: Record<Addon, string> = { voice: 'Voice outreach', airtime: 'Airtime and data', liveVideo: 'Live video from the field', sheetReading: 'Sheet reading' };
 export function addonSettings(settings: any): Record<Addon, boolean> {
   const a = settings?.addons ?? {};
-  return { voice: a.voice === true, airtime: a.airtime === true };
+  return { voice: a.voice === true, airtime: a.airtime === true, liveVideo: a.liveVideo !== false, sheetReading: a.sheetReading !== false };
 }

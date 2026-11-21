@@ -1,5 +1,5 @@
-import { Component, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { Component, computed, inject, signal } from '@angular/core';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -15,36 +15,42 @@ interface ClientRow {
 /** Every client (campaign) on Rumfa, newest first. */
 @Component({
   selector: 'page-clients',
-  imports: [DatePipe, RouterLink, MatButtonModule, MatIconModule],
+  imports: [DatePipe, DecimalPipe, RouterLink, MatButtonModule, MatIconModule],
   template: `
   <div class="page">
     <div class="page-head">
+      <p class="eyebrow">{{ rows().length }} {{ rows().length === 1 ? 'client' : 'clients' }} · {{ totalPeople() | number }} people</p>
       <h1>Clients</h1>
       <span class="spacer"></span>
-      @if (api.canEdit) { <a mat-flat-button routerLink="/clients/new"><mat-icon>add</mat-icon> Onboard a client</a> }
+      @if (api.canEdit) { <a mat-flat-button routerLink="/clients/new"><mat-icon>add</mat-icon> New client</a> }
+      <p class="lede">Each client has its own room, people and settings. Rumfa staff switch add-ons and limits on here.</p>
     </div>
     <table class="grid">
-      <tr><th>Client</th><th>Candidate</th><th>Seat</th><th>Live election</th><th>People</th><th>Status</th><th>Since</th></tr>
+      <tr><th>Client</th><th>Election</th><th>People</th><th>Add-ons</th><th>Status</th><th></th></tr>
       @for (c of rows(); track c.id) {
         <tr class="link" (click)="open(c)">
-          <td><b>{{ c.brand }}</b><div class="hint">{{ c.name }}</div></td>
-          <td>{{ c.candidate_name ?? '—' }} @if (c.party) { <span class="chip">{{ c.party }}</span> }</td>
-          <td>{{ seat(c.seat) }}<div class="hint">{{ c.seat_area_name }}</div></td>
-          <td>{{ c.live_election ?? '—' }}</td>
-          <td class="hint">{{ c.staff }} room · {{ c.coordinators }} coordinators · {{ c.agents }} agents
-            @if (c.addons; as a) { @if (a.voice || a.airtime) { <div>@if (a.voice) { <span class="chip">Voice</span> } @if (a.airtime) { <span class="chip">Airtime</span> }</div> } }</td>
-          <td><span class="chip" [class.ok]="c.status === 'active'" [class.bad]="c.status !== 'active'">{{ label(c.status) }}</span></td>
-          <td class="hint">{{ c.created_at | date: 'd MMM y' }}</td>
+          <td><div class="who"><span class="av">{{ (c.brand || c.name)[0] }}</span>
+            <div><b>{{ c.brand }}</b>@if (c.party) { <span class="chip">{{ c.party }}</span> }
+              <div class="hint">{{ c.name }}</div>
+              <div class="hint">{{ sub(c) }}</div></div></div></td>
+          <td>{{ c.live_election ?? '—' }}<div class="hint">since {{ c.created_at | date: 'd MMM y' }}</div></td>
+          <td><b>{{ c.staff + c.coordinators + c.agents | number }}</b><div class="hint">{{ c.staff }} room · {{ c.coordinators }} coord. · {{ c.agents | number }} agents</div></td>
+          <td>@if (c.addons?.voice) { <span class="chip accent">Voice</span> } @if (c.addons?.airtime) { <span class="chip accent">Airtime</span> }
+            @if (!c.addons?.voice && !c.addons?.airtime) { <span class="hint">None</span> }</td>
+          <td><span class="chip" [class.ok]="c.status === 'active'" [class.bad]="c.status === 'suspended'" [class.warn]="c.status !== 'active' && c.status !== 'suspended'">{{ c.status === 'active' ? 'Live' : label(c.status) }}</span></td>
+          <td class="go"><mat-icon>chevron_right</mat-icon></td>
         </tr>
-      } @empty { <tr><td colspan="7" class="hint">{{ loaded() ? 'No clients yet.' : 'Loading…' }}</td></tr> }
+      } @empty { <tr><td colspan="6" class="hint">{{ loaded() ? 'No clients yet.' : 'Loading…' }}</td></tr> }
     </table>
   </div>`,
+  styles: `.who { display: flex; align-items: center; gap: 10px; } .go { width: 24px; color: var(--r-muted); text-align: right; }`,
 })
 export class ClientsPage {
   api = inject(Api);
   private ui = inject(Ui);
   private router = inject(Router);
   rows = signal<ClientRow[]>([]);
+  totalPeople = computed(() => this.rows().reduce((n, c) => n + c.staff + c.coordinators + c.agents, 0));
   loaded = signal(false);
   label = label;
   private seats: Record<string, string> = {};
@@ -57,6 +63,8 @@ export class ClientsPage {
       this.rows.set(rows);
     } catch (e) { this.ui.error(e); } finally { this.loaded.set(true); }
   }
+  /** "Governor · Kano · Abba Gida": only the parts the client has */
+  sub(c: ClientRow) { return [c.seat ? this.seat(c.seat) : null, c.seat_area_name, c.candidate_name].filter(Boolean).join(' · ') || '—'; }
   seat(s: string | null) { return s ? this.seats[s] ?? label(s) : '—'; }
   open(c: ClientRow) { void this.router.navigate(['/clients', c.id]); }
 }

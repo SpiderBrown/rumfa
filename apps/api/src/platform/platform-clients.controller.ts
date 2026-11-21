@@ -55,6 +55,8 @@ class LimitsDto {
 class AddonsDto {
   @ApiPropertyOptional({ description: 'Voice outreach' }) @IsOptional() @IsBoolean() voice?: boolean;
   @ApiPropertyOptional({ description: 'Airtime and data top-ups' }) @IsOptional() @IsBoolean() airtime?: boolean;
+  @ApiPropertyOptional({ description: 'Live video from the field (on unless switched off)' }) @IsOptional() @IsBoolean() liveVideo?: boolean;
+  @ApiPropertyOptional({ description: 'Sheet reading: figures read from agents\' photos (on unless switched off)' }) @IsOptional() @IsBoolean() sheetReading?: boolean;
 }
 class UpdateClientDto {
   @ApiPropertyOptional({ type: AddonsDto, description: 'Premium add-ons to switch on or off' }) @IsOptional() @ValidateNested() @Type(() => AddonsDto) addons?: AddonsDto;
@@ -140,8 +142,21 @@ export class PlatformClientsController {
         `select a.at, a.action, a.details, s.full_name as by from public.platform_audit a left join public.platform_staff s on s.id = a.staff_id
           where a.tenant_id = $1 order by a.at desc limit 30`, [id]),
     ];
+    // At a glance: people, today's cases, photos and SMS (Lagos day)
+    const [stats] = await this.db.system(
+      `with day as (select date_trunc('day', now() at time zone 'Africa/Lagos') at time zone 'Africa/Lagos' as start)
+       select (select count(*)::int from public.volunteers v where v.tenant_id = $1 and v.status <> 'removed' and v.platform_staff_id is null) as people,
+              (select count(*)::int from public.volunteers v where v.tenant_id = $1 and v.status <> 'removed' and v.role = 'agent') as agents,
+              (select count(*)::int from public.volunteers v where v.tenant_id = $1 and v.status <> 'removed' and v.role = 'coordinator') as coordinators,
+              (select count(*)::int from public.cases c, day where c.tenant_id = $1 and c.created_at >= day.start) as cases_today,
+              (select count(*)::int from public.cases c where c.tenant_id = $1 and c.status not in ('resolved','closed','merged')) as cases_open,
+              (select coalesce(sum(coalesce(array_length(i.media_paths, 1), 0)), 0)::int from public.incidents i, day
+                where i.tenant_id = $1 and i.reported_at >= day.start) as photos_today,
+              (select count(*)::int from public.outbox o, day where o.tenant_id = $1 and o.channel = 'sms' and o.status = 'sent' and o.sent_at >= day.start) as sms_today,
+              (select count(*)::int from public.result_submissions r where r.tenant_id = $1) as results`, [id]);
     const settings = t.settings ?? {};
     return {
+      stats,
       id: t.id, name: t.name, brand: settings.brand ?? t.name, status: t.status, candidateName: t.candidate_name, party: t.party,
       seat: t.seat, seatArea: t.seat_area, seatAreaName: t.seat_area_name, notes: t.notes, createdAt: t.created_at,
       limits: Object.fromEntries(LIMIT_KEYS.map((k) => [k, settings[k] ?? null])),

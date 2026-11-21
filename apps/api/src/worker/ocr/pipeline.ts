@@ -66,6 +66,8 @@ export async function ocrPendingAgentPhotos(limit = 20): Promise<number> {
   const subs = await q(
     `select s.id, s.tenant_id, s.election_id, s.pu_code, s.sheet_photo_path from public.result_submissions s
       where s.sheet_photo_path is not null and not exists (select 1 from public.ocr_extractions o where o.submission_id = s.id)
+        -- Sheet reading switched off for this client (Rumfa Console): the agent's typed figures are the record
+        and coalesce((select t.settings->'addons'->>'sheetReading' from public.tenants t where t.id = s.tenant_id), 'true') <> 'false'
       order by s.submitted_at desc limit $1`, [limit]);
   let n = 0;
   for (const s of subs) {

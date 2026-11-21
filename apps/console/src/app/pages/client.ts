@@ -1,5 +1,5 @@
 import { Component, inject, input, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -14,9 +14,11 @@ import { Ui, copy, label } from '../core/ui';
 interface Person { id: string; full_name: string; role: string; level: string; area_code: string; area_name: string | null; email: string | null; phone: string; status: string }
 interface Detail {
   id: string; name: string; brand: string; status: string; candidateName: string | null; party: string | null; seat: string | null;
-  seatArea: string | null; seatAreaName: string | null; notes: string | null; createdAt: string; limits: Record<string, number | null>; addons?: { voice: boolean; airtime: boolean };
+  seatArea: string | null; seatAreaName: string | null; notes: string | null; createdAt: string; limits: Record<string, number | null>;
+  addons?: { voice: boolean; airtime: boolean; liveVideo: boolean; sheetReading: boolean };
   coverage: { level: string; area_code: string; name: string }[]; elections: { purpose: string; id: string; name: string; election_date: string; status: string }[];
   domains: string[]; people: Person[]; recent: { at: string; action: string; by: string | null; details: any }[];
+  stats?: { people: number; agents: number; coordinators: number; cases_today: number; cases_open: number; photos_today: number; sms_today: number; results: number };
 }
 
 const LIMITS: { key: string; label: string; hint: string }[] = [
@@ -32,20 +34,21 @@ const LIMITS: { key: string; label: string; hint: string }[] = [
 /** One client: what it is, its area and elections, its people at the top, its limits and website, and what Rumfa staff changed. */
 @Component({
   selector: 'page-client',
-  imports: [DatePipe, FormsModule, RouterLink, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatSelectModule, MatSlideToggleModule],
+  imports: [DatePipe, DecimalPipe, FormsModule, RouterLink, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatSelectModule, MatSlideToggleModule],
   template: `
   <div class="page">
     @if (d(); as d) {
+      <a class="back" routerLink="/clients"><mat-icon>arrow_back</mat-icon> Clients</a>
       <div class="page-head">
-        <a mat-icon-button routerLink="/clients"><mat-icon>arrow_back</mat-icon></a>
+        <p class="eyebrow">{{ seatLabel(d.seat) }}{{ d.seatAreaName ? ' · ' + d.seatAreaName : '' }} · since {{ d.createdAt | date: 'MMM y' }}</p>
         <h1>{{ d.brand }}</h1>
-        <span class="chip" [class.ok]="d.status === 'active'" [class.bad]="d.status !== 'active'">{{ label(d.status) }}</span>
+        <span class="chip" [class.ok]="d.status === 'active'" [class.bad]="d.status !== 'active'">{{ d.status === 'active' ? 'Live' : label(d.status) }}</span>
         <span class="spacer"></span>
         @if (api.canEdit) {
+          @if (d.status === 'active') { <button mat-stroked-button (click)="openDashboard()"><mat-icon>login</mat-icon> Open their room</button> }
           @if (!editing()) { <button mat-stroked-button (click)="startEdit()"><mat-icon>edit</mat-icon> Edit</button> }
-          @if (d.status === 'active') { <button mat-flat-button (click)="openDashboard()"><mat-icon>open_in_new</mat-icon> Open dashboard as admin</button> }
-          @if (d.status === 'active') { <button mat-stroked-button (click)="setStatus('suspended')"><mat-icon>pause</mat-icon> Suspend</button> }
-          @else { <button mat-stroked-button (click)="setStatus('active')"><mat-icon>play_arrow</mat-icon> Make active</button> }
+          @if (d.status === 'active') { <button mat-stroked-button (click)="setStatus('suspended')"><mat-icon>pause</mat-icon> Pause</button> }
+          @else { <button mat-flat-button (click)="setStatus('active')"><mat-icon>play_arrow</mat-icon> Make active</button> }
         }
       </div>
 
@@ -125,19 +128,34 @@ const LIMITS: { key: string; label: string; hint: string }[] = [
         </div>
       }
 
-      <div class="cols">
-        <div>
+      <div class="tabs" role="tablist">
+        @for (t of tabList; track t.id) { <button role="tab" [class.on]="tab() === t.id" (click)="tab.set(t.id)">{{ t.label }}</button> }
+      </div>
+
+      @switch (tab()) {
+        @case ('overview') {
+          <div class="cols">
+            <div>
           <div class="card">
             <h2>Client</h2>
             <p><b>{{ d.name }}</b></p>
             <p>{{ d.candidateName ?? '—' }} @if (d.party) { <span class="chip">{{ d.party }}</span> }</p>
-            <p>{{ seatLabel(d.seat) }} · {{ d.seatAreaName ?? d.seatArea }}</p>
+            <p>{{ seatLabel(d.seat) }}{{ (d.seatAreaName ?? d.seatArea) ? " · " + (d.seatAreaName ?? d.seatArea) : "" }}</p>
             <p class="hint">Covers {{ coverage(d) }}</p>
             @for (e of d.elections; track e.id) { <p class="hint">{{ e.purpose === 'live' ? 'Live' : 'Compares with' }}: {{ e.name }} ({{ e.election_date }})</p> }
             @if (d.notes) { <p class="hint">Notes: {{ d.notes }}</p> }
             <p class="hint">Onboarded {{ d.createdAt | date: 'd MMM y' }}</p>
           </div>
 
+          <div class="card">
+            <h2>Dashboard address</h2>
+            <p class="hint">The client's situation room opens on these addresses (one per line).</p>
+            <mat-form-field class="full"><textarea matInput rows="2" [(ngModel)]="domains" [disabled]="!api.canEdit" placeholder="e.g. room.example.ng"></textarea></mat-form-field>
+            @if (api.canEdit) { <button mat-stroked-button (click)="saveDomains()">Save addresses</button> }
+          </div>
+
+            </div>
+            <div>
           <div class="card">
             <h2>Add-ons</h2>
             <p class="hint">Premium services. When off, the client's dashboard does not show them and nothing is sent.</p>
@@ -149,14 +167,31 @@ const LIMITS: { key: string; label: string; hint: string }[] = [
             }
           </div>
 
-          <div class="card">
-            <h2>Dashboard address</h2>
-            <p class="hint">The client's situation room opens on these addresses (one per line).</p>
-            <mat-form-field class="full"><textarea matInput rows="2" [(ngModel)]="domains" [disabled]="!api.canEdit" placeholder="e.g. room.example.ng"></textarea></mat-form-field>
-            @if (api.canEdit) { <button mat-stroked-button (click)="saveDomains()">Save addresses</button> }
+            </div>
+          </div>
+          @if (d.stats; as st) {
+            <div class="kpis">
+              <div class="kpi"><span class="k-l">People</span><b>{{ st.people | number }}</b><span class="k-h">{{ st.agents | number }} agents · {{ st.coordinators | number }} coordinators</span></div>
+              <div class="kpi"><span class="k-l">Cases today</span><b>{{ st.cases_today | number }}</b><span class="k-h">{{ st.cases_open | number }} open now</span></div>
+              <div class="kpi"><span class="k-l">Photos today</span><b>{{ st.photos_today | number }}</b><span class="k-h">with reports</span></div>
+              <div class="kpi"><span class="k-l">SMS today</span><b>{{ st.sms_today | number }}</b><span class="k-h">sent by Rumfa</span></div>
+              <div class="kpi"><span class="k-l">Results</span><b>{{ st.results | number }}</b><span class="k-h">EC8A sheets received</span></div>
+            </div>
+          }
+        }
+        @case ('addons') { <div class="narrow">          <div class="card">
+            <h2>Add-ons</h2>
+            <p class="hint">Premium services. When off, the client's dashboard does not show them and nothing is sent.</p>
+            @for (a of addonList; track a.key) {
+              <div class="addon">
+                <mat-slide-toggle [checked]="!!d.addons?.[a.key]" [disabled]="!api.canEdit" (change)="setAddon(a.key, $event.checked)">{{ a.label }}</mat-slide-toggle>
+                <div class="hint">{{ a.hint }}</div>
+              </div>
+            }
           </div>
 
-          <div class="card">
+</div> }
+        @case ('limits') { <div class="narrow">          <div class="card">
             <h2>Limits</h2>
             @for (l of limits; track l.key) {
               <mat-form-field class="full"><mat-label>{{ l.label }}</mat-label>
@@ -165,10 +200,8 @@ const LIMITS: { key: string; label: string; hint: string }[] = [
             }
             @if (api.canEdit) { <button mat-stroked-button (click)="saveLimits()">Save limits</button> }
           </div>
-        </div>
-
-        <div>
-          <div class="card">
+</div> }
+        @case ('admins') {           <div class="card">
             <div class="page-head"><h2>People at the top</h2><span class="spacer"></span>
               @if (api.canEdit) {
                 <button mat-button (click)="addPerson('admin')"><mat-icon>person_add</mat-icon> Admin</button>
@@ -194,18 +227,22 @@ const LIMITS: { key: string; label: string; hint: string }[] = [
             }
           </div>
 
-          <div class="card">
+ }
+        @case ('activity') { <div class="narrow">          <div class="card">
             <h2>What Rumfa staff changed</h2>
             @for (r of d.recent; track $index) {
               <p class="hint"><b>{{ r.at | date: 'd MMM, HH:mm' }}</b> · {{ r.by ?? 'System' }} · {{ actionText(r.action) }}</p>
             } @empty { <p class="hint">Nothing yet.</p> }
           </div>
-        </div>
-      </div>
+</div> }
+      }
     } @else { <p class="hint">Loading…</p> }
   </div>`,
   styles: `.addon { margin: 8px 0 12px; } .addon .hint { margin: 2px 0 0 52px; }
-    .cols { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 16px; } @media (max-width: 1200px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+    .back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+    .back mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; } @media (max-width: 1100px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+    .narrow { max-width: 760px; }
     .scroll { overflow-x: auto; }
     h3 { font: var(--mat-sys-title-small); margin: 12px 0 4px; }
     .impact { background: var(--mat-sys-surface-container); border-radius: 10px; padding: 8px 12px; margin-bottom: 8px; } .impact p { margin: 4px 0; }
@@ -217,6 +254,9 @@ export class ClientPage {
   api = inject(Api);
   private ui = inject(Ui);
   d = signal<Detail | null>(null);
+  readonly tabList = [{ id: 'overview', label: 'Overview' }, { id: 'addons', label: 'Add-ons' }, { id: 'limits', label: 'Limits' },
+    { id: 'admins', label: 'Admins' }, { id: 'activity', label: 'Activity' }] as const;
+  tab = signal<'overview' | 'addons' | 'limits' | 'admins' | 'activity'>('overview');
   editing = signal(false);
   seats = signal<{ seat: string; label: string; area: string; ready: boolean }[]>([]);
   states = signal<{ code: string; name: string }[]>([]);
@@ -236,6 +276,8 @@ export class ClientPage {
   readonly addonList = [
     { key: 'voice' as const, label: 'Voice outreach', hint: 'Recorded messages called out to supporters, with consent and opt-out.' },
     { key: 'airtime' as const, label: 'Airtime and data', hint: 'Airtime and data top-ups for agents and coordinators, approved by two admins.' },
+    { key: 'liveVideo' as const, label: 'Live video from the field', hint: 'The room can ask an agent to stream video from the unit. On for every client unless switched off.' },
+    { key: 'sheetReading' as const, label: 'Sheet reading', hint: 'Reads the figures from agents\' EC8A photos automatically, to check what they typed. On unless switched off.' },
   ];
   label = label;
   private seatNames: Record<string, string> = {};
@@ -346,7 +388,7 @@ export class ClientPage {
     const list = this.domains.split(/[\s,]+/).map((x) => x.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean);
     if (await this.ui.run(() => this.api.patch(`/platform/clients/${this.d()!.id}`, { domains: list }), 'Addresses saved')) await this.load();
   }
-  async setAddon(key: 'voice' | 'airtime', on: boolean) {
+  async setAddon(key: 'voice' | 'airtime' | 'liveVideo' | 'sheetReading', on: boolean) {
     const name = this.addonList.find((a) => a.key === key)!.label;
     if (!on && !(await this.ui.confirm(`Switch off ${name}?`, `${this.d()!.name} will no longer see ${name} on its dashboard, and nothing more is sent. Their records stay; switching it on again brings them back.`, 'Switch off'))) {
       await this.load(); return;

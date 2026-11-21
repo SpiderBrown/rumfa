@@ -7,7 +7,8 @@ import { MatInputModule } from '@angular/material/input';
 import { Api } from '../core/api';
 import { Ui } from '../core/ui';
 
-interface Party { acronym: string; name: string; colour: string | null; logoUrl: string | null; elections: number; clients: number }
+interface Party { acronym: string; name: string; colour: string | null; logoUrl: string | null; elections: number; clients: number;
+  ballots: { name: string; state: string | null; date: string }[] }
 interface Form { editing: boolean; acronym: string; name: string; colour: string; logo: string | null; removeLogo: boolean; currentLogo: string | null }
 
 /** Political parties shared by every client: name, colour on maps and charts, and logo. */
@@ -17,9 +18,11 @@ interface Form { editing: boolean; acronym: string; name: string; colour: string
   template: `
   <div class="page">
     <div class="page-head">
+      <p class="eyebrow">Shared by every client</p>
       <h1>Parties</h1>
       <span class="spacer"></span>
-      @if (api.canEdit && !form()) { <button mat-flat-button (click)="startNew()"><mat-icon>add</mat-icon> Add a party</button> }
+      @if (api.canEdit && !form()) { <button mat-flat-button (click)="startNew()"><mat-icon>add</mat-icon> Add party</button> }
+      <p class="lede">Names, colours and logos used on results, maps and in every client's apps.</p>
     </div>
 
     @if (form(); as f) {
@@ -56,15 +59,18 @@ interface Form { editing: boolean; acronym: string; name: string; colour: string
       </div>
     }
 
-    <p class="hint">Logos are shown in every client's apps.</p>
     <table class="grid">
-      <tr><th>Logo</th><th>Party</th><th>Colour</th><th>Used in</th><th></th></tr>
+      <tr><th>Logo</th><th>Party</th><th>Short name</th><th>Colour</th><th>On ballot in</th><th>Used by</th><th></th></tr>
       @for (p of rows(); track p.acronym) {
         <tr>
           <td>@if (p.logoUrl) { <img class="logo big" [src]="api.asset(p.logoUrl)" [alt]="p.acronym + ' logo'" /> } @else { <span class="nologo">{{ p.acronym }}</span> }</td>
-          <td><b>{{ p.acronym }}</b><div class="hint">{{ p.name }}</div></td>
+          <td><b>{{ p.name }}</b></td>
+          <td>{{ p.acronym }}</td>
           <td><span class="swatch" [style.background]="p.colour ?? '#fff'"></span> <span class="hint">{{ p.colour ?? 'Not set' }}</span></td>
-          <td class="hint">{{ p.elections }} election(s) · {{ p.clients }} client(s)</td>
+          <td>@if (p.ballots.length) {
+              {{ ballotText(p) }}@if (p.ballots.length > 2) { <span class="hint" [title]="allBallots(p)"> +{{ p.ballots.length - 2 }} more</span> }
+            } @else { <span class="hint">Not on a ballot yet</span> }</td>
+          <td class="hint">{{ p.clients || '—' }}<div>{{ p.elections }} election(s)</div></td>
           <td>@if (api.canEdit) { <button mat-button (click)="edit(p)"><mat-icon>edit</mat-icon> Edit</button> }</td>
         </tr>
       }
@@ -84,6 +90,9 @@ interface Form { editing: boolean; acronym: string; name: string; colour: string
   `,
 })
 export class PartiesPage {
+  /** "2027 Presidential · Kano Governorship 2027": the two latest elections it's on */
+  ballotText(p: Party) { return p.ballots.slice(0, 2).map((b) => b.name).join(' · '); }
+  allBallots(p: Party) { return p.ballots.map((b) => `${b.name}${b.state ? ' (' + b.state + ')' : ''}`).join('\n'); }
   api = inject(Api);
   private ui = inject(Ui);
   rows = signal<Party[]>([]);

@@ -436,15 +436,24 @@ describe('Rumfa Console (e2e)', () => {
     await http.get(api('/voice/campaigns')).set(as(clientAdmin)).expect(403);
     await http.get(api('/topups/plans')).set(as(clientAdmin)).expect(403);
     await http.patch(api(`/platform/clients/${tid}`)).set(as(owner)).send({ addons: { voice: true } }).expect(200);
-    expect((await http.get(api(`/platform/clients/${tid}`)).set(as(owner)).expect(200)).body.addons).toEqual({ voice: true, airtime: false });
-    expect((await http.get(api('/me/context')).set(as(clientAdmin)).expect(200)).body.addons).toEqual({ voice: true, airtime: false });
+    // Live video and sheet reading were part of every client before they became switches: on unless switched off
+    expect((await http.get(api(`/platform/clients/${tid}`)).set(as(owner)).expect(200)).body.addons).toEqual({ voice: true, airtime: false, liveVideo: true, sheetReading: true });
+    expect((await http.get(api('/me/context')).set(as(clientAdmin)).expect(200)).body.addons).toEqual({ voice: true, airtime: false, liveVideo: true, sheetReading: true });
     await http.get(api('/voice/campaigns')).set(as(clientAdmin)).expect(200);
     await http.get(api('/topups/plans')).set(as(clientAdmin)).expect(403);
     await http.patch(api(`/platform/clients/${tid}`)).set(as(owner)).send({ addons: { airtime: true } }).expect(200);
     await http.get(api('/topups/plans')).set(as(clientAdmin)).expect(200);
-    expect((await http.get(api('/platform/clients')).set(as(owner)).expect(200)).body.find((c: any) => c.id === tid).addons).toEqual({ voice: true, airtime: true });
+    expect((await http.get(api('/platform/clients')).set(as(owner)).expect(200)).body.find((c: any) => c.id === tid).addons).toMatchObject({ voice: true, airtime: true });
     await http.patch(api(`/platform/clients/${tid}`)).set(as(owner)).send({ addons: { voice: false } }).expect(200);
     await http.get(api('/voice/campaigns')).set(as(clientAdmin)).expect(403);
+
+    // Live video switched off: the room can't ask an agent to stream (any case will do: the switch is checked first)
+    await http.patch(api(`/platform/clients/${tid}`)).set(as(owner)).send({ addons: { liveVideo: false } }).expect(200);
+    const off = await http.post(api(`/cases/${'00000000-0000-4000-8000-000000000000'}/live-view`)).set(as(clientAdmin)).send({ agentId: '00000000-0000-4000-8000-000000000000' });
+    expect(off.status).toBe(403);
+    expect(off.body.message).toContain('Live video from the field');
+    expect((await http.get(api('/me/context')).set(as(clientAdmin)).expect(200)).body.addons.liveVideo).toBe(false);
+    await http.patch(api(`/platform/clients/${tid}`)).set(as(owner)).send({ addons: { liveVideo: true } }).expect(200);
   });
 
   it('authority contacts: official ones added once in the console show on every client\'s dashboard', async () => {
@@ -484,5 +493,48 @@ describe('Rumfa Console (e2e)', () => {
     await http.patch(api(`/platform/staff/${s.id}`)).set(as(owner)).send({ status: 'suspended' }).expect(200);
     await http.post(api('/platform/auth/refresh')).send({ refreshToken: sup.refresh }).expect(401);
     await http.post(api('/platform/auth/login')).send({ email: 'support@rumfa.test', password: sup.password }).expect(401);
+  });
+  it('IReV in the console: progress for any election, fetch jobs that belong to no client, one watcher per election', async () => {
+    const st = await signUp('irev-staff@rumfa.test', 'staff');
+    await ds.query(`update public.elections set irev_election_id = 'abc123abc123abc123abc123' where id = $1`, [LIVE]);
+    const els = (await http.get(api('/platform/irev/elections')).set(as(st.access)).expect(200)).body;
+    expect(els.find((e: any) => e.id === LIVE)).toMatchObject({ watcher: null });
+    const sum = (await http.get(api('/platform/irev/summary')).query({ election: LIVE, parent: '19' }).set(as(st.access)).expect(200)).body;
+    expect(sum.length).toBeGreaterThan(0);
+    expect(sum.every((r: any) => /^19-\d{2}$/.test(r.area_code) && r.name)).toBe(true);
+
+    const job = (await http.post(api('/platform/irev/jobs')).set(as(st.access)).send({ electionId: LIVE, jobType: 'live', areaCode: '19-28', keep: 'file' }).expect(201)).body;
+    expect(job).toMatchObject({ tenant_id: null, area_level: 'lga', keep: 'file' });
+    await http.patch(api(`/platform/irev/jobs/${job.id}`)).set(as(st.access)).send({ status: 'cancelled' }).expect(200);
+
+    // The watcher: links only, rechecking; starting again replaces it; stopping cancels it
+    const w = (await http.post(api('/platform/irev/watch')).set(as(st.access)).send({ electionId: LIVE, on: true, intervalMin: 15, areaCode: '19' }).expect(201)).body;
+    expect(w).toMatchObject({ watcher: true, keep: 'link', auto_recheck: true, interval_min: 15, area_code: '19', job_type: 'live' });
+    await http.post(api('/platform/irev/watch')).set(as(st.access)).send({ electionId: LIVE, on: true, intervalMin: 30 }).expect(201);
+    const [{ n }] = await ds.query(`select count(*)::int as n from public.irev_fetch_jobs where election_id = $1 and watcher and status = 'queued'`, [LIVE]);
+    expect(n).toBe(1);
+    expect((await http.get(api('/platform/irev/elections')).set(as(st.access)).expect(200)).body.find((e: any) => e.id === LIVE).watcher.interval_min).toBe(30);
+    // A client's dashboard sees the watcher, and its Pull now only ever saves links
+    expect((await http.get(api('/irev/status')).query({ election: LIVE }).set(as(clientAdmin)).expect(200)).body.watcher).toMatchObject({ interval_min: 30 });
+    // (a ward in Kano is already covered by the watcher)
+    await http.post(api('/irev/jobs')).set(as(clientAdmin)).send({ electionId: LIVE, jobType: 'live', areaLevel: 'ward', areaCode: '19-28-02', keep: 'file' }).expect(409);
+    const pull = (await http.post(api('/irev/jobs')).set(as(clientAdmin)).send({ electionId: LIVE, jobType: 'live', areaLevel: 'ward', areaCode: '02-21-06', keep: 'file' }).expect(201)).body;
+    expect(pull.keep).toBe('link');
+    await http.post(api('/platform/irev/watch')).set(as(st.access)).send({ electionId: LIVE, on: false }).expect(201);
+    await ds.query(`update public.irev_fetch_jobs set status = 'cancelled' where election_id = $1 and status in ('queued','running')`, [LIVE]);
+    await http.get(api('/platform/irev/elections')).set(as(clientAdmin)).expect(401);
+    await ds.query(`update public.elections set irev_election_id = null where id = $1`, [LIVE]);
+  });
+  it('background jobs: worker heartbeats and every queue in one view; failed notifications can be tried again', async () => {
+    const st = await signUp('jobs-staff@rumfa.test', 'staff');
+    await ds.query(`insert into public.worker_heartbeats (task, every_s, last_run_at, last_ok_at, runs) values ('outbox', 5, now(), now(), 12)
+                    on conflict (task) do update set last_run_at = now()`);
+    await ds.query(`insert into public.outbox (channel, to_phone, template, data, status, attempts, last_error) values ('sms', '+2348000000001', 'raw', '{"text":"x"}', 'failed', 5, 'SMS provider said no')`);
+    const o = (await http.get(api('/platform/background/overview')).set(as(st.access)).expect(200)).body;
+    expect(o.worker.find((b: any) => b.task === 'outbox')).toMatchObject({ every_s: 5 });
+    expect(o.outbox.failures[0]).toMatchObject({ channel: 'sms', last_error: 'SMS provider said no' });
+    expect(o).toHaveProperty('irev'); expect(o).toHaveProperty('ocr.waiting');
+    expect((await http.post(api('/platform/background/outbox/retry')).set(as(st.access)).send({}).expect(200)).body.requeued).toBeGreaterThan(0);
+    await http.get(api('/platform/background/overview')).set(as(clientAdmin)).expect(401);
   });
 });

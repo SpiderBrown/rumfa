@@ -1,64 +1,86 @@
-// Include theming for Angular Material with `mat.theme()`.
-// This Sass mixin will define CSS variables that are used for styling Angular Material
-// components according to the Material 3 design spec.
-// Learn more about theming and how to use it for your application's
-// custom components at https://material.angular.dev/guide/theming
+// Rumfa Console look: the same calm neutrals, teal accent and Inter as the Rumfa Room. Material components take the
+// colours through theme overrides; the shared classes below (.page, .page-head, table.grid, .card, .chip …) are what
+// every Console page is built from, so restyling them restyles the whole Console without changing what pages do.
 @use '@angular/material' as mat;
 
 html {
   height: 100%;
   @include mat.theme(
     (
-      color: (
-        primary: mat.$azure-palette,
-        tertiary: mat.$blue-palette,
-      ),
-      typography: Roboto,
+      color: (primary: mat.$cyan-palette, tertiary: mat.$blue-palette),
+      typography: (plain-family: 'Inter, system-ui, sans-serif', brand-family: 'Inter, system-ui, sans-serif'),
       density: 0,
     )
   );
+  @include mat.theme-overrides(
+    (
+      primary: #0f766e, on-primary: #ffffff, primary-container: #d5ece9, on-primary-container: #0b3d38,
+      secondary-container: #e3f1ef, on-secondary-container: #0b3d38,
+      surface: #f5f6f8, surface-container: #ffffff, surface-container-low: #ffffff, surface-container-high: #ffffff,
+      outline-variant: #dce1e8, error: #a1251b,
+    )
+  );
+  --r-ink: #14171f; --r-ink-2: #3d4652; --r-muted: #5b6675; --r-ground: #f5f6f8; --r-card: #ffffff;
+  --r-line: #dce1e8; --r-line-soft: #eef1f4; --r-accent: #0f766e; --r-accent-strong: #0b5a54; --r-accent-soft: #f1f8f7;
+  --r-urgent: #a1251b; --r-high: #b4541a; --r-high-bg: #fde7d6; --r-nav: #121a24; --r-radius: 14px;
 }
 
 body {
-  // Default the application to a light color theme. This can be changed to
-  // `dark` to enable the dark color theme, or to `light dark` to defer to the
-  // user's system settings.
   color-scheme: light;
-
-  // Set a default background, font and text colors for the application using
-  // Angular Material's system-level CSS variables. Learn more about these
-  // variables at https://material.angular.dev/guide/system-variables
-  background-color: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
+  background-color: var(--r-ground);
+  color: var(--r-ink);
   font: var(--mat-sys-body-medium);
-
-  // Reset the user agent margin.
+  font-family: Inter, system-ui, sans-serif;
   margin: 0;
   height: 100%;
 }
-/* You can add global styles to this file, and also import other style files */
 
+a { color: #0f5e8c; }
 .full { width: 100%; }
-.snack-error { --mat-snack-bar-container-color: var(--mat-sys-error-container); --mat-snack-bar-supporting-text-color: var(--mat-sys-on-error-container); }
-a { color: var(--mat-sys-primary); }
-
-.full { width: 100%; }
-.snack-error { --mat-snack-bar-container-color: #8f1d1d; }
-.page { max-width: 1200px; }
-.page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-.page-head h1 { font: var(--mat-sys-headline-small); margin: 0; }
+.snack-error { --mat-snack-bar-container-color: #8f1d1d; --mat-snack-bar-supporting-text-color: #fff; }
 .spacer { flex: 1; }
-.hint { color: var(--mat-sys-on-surface-variant); font-size: 13px; }
-table.grid { width: 100%; border-collapse: collapse; background: var(--mat-sys-surface); }
-table.grid th { text-align: left; font: var(--mat-sys-label-medium); color: var(--mat-sys-on-surface-variant); padding: 8px 10px; border-bottom: 1px solid var(--mat-sys-outline-variant); }
-table.grid td { padding: 8px 10px; border-bottom: 1px solid var(--mat-sys-outline-variant); vertical-align: middle; }
-table.grid tr.link { cursor: pointer; } table.grid tr.link:hover td { background: var(--mat-sys-surface-container); }
-.chip { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--mat-sys-outline-variant); margin-right: 4px; }
-.chip.ok { background: #e3f4e8; border-color: #4caf50; } .chip.bad { background: #fde2e2; border-color: #b3261e; } .chip.warn { background: #fff1e0; border-color: #fb923c; }
-.card { background: var(--mat-sys-surface-container-low); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-.card h2 { font: var(--mat-sys-title-medium); margin: 0 0 12px; }
+.hint { color: var(--r-muted); font-size: 13px; }
+
+// Page: an eyebrow line (optional), a big title, a one-line explanation, and the actions on the right
+.page { max-width: 1400px; }
+.page-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.page-head h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -.01em; color: var(--r-ink); }
+.page-head .eyebrow { flex-basis: 100%; margin: 0 0 -6px; font-size: 13px; font-weight: 600; color: var(--r-muted); }
+.page-head .lede { flex-basis: 100%; margin: -4px 0 0; color: var(--r-ink-2); font-size: 14px; }
+
+// Tables: white card, light header row, soft lines
+table.grid { width: 100%; border-collapse: separate; border-spacing: 0; background: #fff; border: 1px solid var(--r-line); border-radius: var(--r-radius); overflow: hidden; font-size: 13.5px; }
+table.grid th { text-align: left; font-size: 12px; font-weight: 600; color: var(--r-muted); padding: 10px 14px; background: #fafbfc; border-bottom: 1px solid var(--r-line); }
+table.grid td { padding: 10px 14px; border-bottom: 1px solid var(--r-line-soft); vertical-align: middle; }
+table.grid tr:last-child td { border-bottom: 0; }
+table.grid tr.link { cursor: pointer; } table.grid tr.link:hover td { background: #fafbfc; }
+.card table.grid { border-radius: 10px; }
+
+// Chips and status pills
+.chip { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 0; background: #eef1f4; color: var(--r-ink-2); margin-right: 4px; white-space: nowrap; }
+.chip.ok { background: #e3f4ea; color: #146c3a; } .chip.bad { background: #fdecea; color: #7a1d16; } .chip.warn { background: #fdf3d8; color: #6b4a00; }
+.chip.accent { background: #dff0ee; color: #0b5a54; }
+
+// Cards
+.card { background: #fff; border: 1px solid var(--r-line); border-radius: var(--r-radius); padding: 16px 18px; margin-bottom: 16px; }
+.card h2 { margin: 0 0 12px; font-size: 16px; font-weight: 700; color: var(--r-ink); }
+.card h3 { font-size: 14px; font-weight: 700; }
+
+// Number tiles (KPIs)
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: #fff; border: 1px solid var(--r-line); border-radius: var(--r-radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.kpi .k-l { font-size: 13px; font-weight: 600; color: var(--r-ink-2); }
+.kpi b { font-size: 26px; font-weight: 800; color: var(--r-ink); line-height: 1.2; }
+.kpi .k-h { font-size: 12px; color: var(--r-muted); }
+
+// Tabs (a row of buttons with an underline)
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--r-line); margin-bottom: 18px; overflow-x: auto; }
+.tabs button { border: 0; background: none; padding: 11px 14px 10px; font: inherit; font-size: 14px; font-weight: 700; color: var(--r-muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs button.on { color: var(--r-ink); border-bottom-color: var(--r-accent); }
+
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .row > * { flex: 1 1 200px; }
-.logo { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; background: #fff; border: 1px solid var(--mat-sys-outline-variant); vertical-align: middle; }
-.swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,.2); vertical-align: middle; }
-code.link { display: block; word-break: break-all; background: var(--mat-sys-surface-container); padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.logo { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; background: #fff; border: 1px solid var(--r-line); vertical-align: middle; }
+.swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); vertical-align: middle; }
+code.link { display: block; word-break: break-all; background: #f3f5f8; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.av { width: 32px; height: 32px; border-radius: 8px; background: var(--r-accent); color: #fff; display: inline-grid; place-items: center; font-weight: 800; font-size: 14px; flex: none; }

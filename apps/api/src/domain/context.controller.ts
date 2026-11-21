@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags 
 import { ArrayMaxSize, IsArray, IsEmail, IsIn, IsOptional, IsString, Length, MaxLength, ValidateIf } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
+import { rulesOf } from '../common/rules';
 import { Db } from '../database/db.service';
 import { callFn, elections } from '../common/fn';
 import { ROOM } from './roles';
@@ -66,7 +67,10 @@ export class ContextController {
     }).then(async (ctx) => {
       const settings = await tenantSettings(this.db, user.tid);
       const own = ownParty(settings);
-      return { ...ctx, calls: callSettings(settings), addons: addonSettings(settings), ownParty: own && ctx.parties.includes(own) ? own : null };
+      const rules = rulesOf(settings);
+      // The client's own routing: where each report goes and how urgent it starts
+      const categories = ctx.categories.map((c: any) => ({ ...c, severity: rules.routing[c.code]?.severity ?? c.severity, queue_kind: rules.routing[c.code]?.queue ?? c.queue_kind }));
+      return { ...ctx, categories, rules, calls: callSettings(settings), addons: addonSettings(settings), ownParty: own && ctx.parties.includes(own) ? own : null };
     });
   }
 

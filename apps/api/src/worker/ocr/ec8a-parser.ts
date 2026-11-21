@@ -9,8 +9,12 @@ import type { ResultFigures } from '../../shared';
 
 export interface OcrLine { text: string; confidence: number }   // confidence 0..1 from the provider
 
+/** Items 3, 4, 5 and 8 of the sheet (ballot papers): picked up when the reader finds them, never required */
+export interface BallotPapers { ballots_received?: number; unused?: number; spoiled?: number; used?: number }
+
 export interface ParsedSheet {
   figures: ResultFigures;
+  ballots: BallotPapers;
   confidence: Record<string, number>;   // field -> 0..1
   minConfidence: number;
   sheetPuCode: string | null;
@@ -23,6 +27,14 @@ const HEADER_PATTERNS: [keyof Omit<ResultFigures, 'votes'>, RegExp][] = [
   ['accredited', /accredited\s+voters/i],
   ['rejected', /rejected\s+ballots?/i],
   ['totalValid', /total\s+(number\s+of\s+)?valid\s+votes/i],
+];
+
+// "Used" must not match "unused"; "spoilt" is how many sheets spell it
+const BALLOT_PATTERNS: [keyof BallotPapers, RegExp][] = [
+  ['ballots_received', /(ballot\s+papers?\s+(issued|received)|issued\s+to\s+the\s+polling)/i],
+  ['unused', /unused\s+ballot/i],
+  ['spoiled', /spoil(ed|t)\s+ballot/i],
+  ['used', /(?<!un)used\s+ballot/i],
 ];
 
 const SMALL: Record<string, number> = {
@@ -54,6 +66,7 @@ function firstInt(s: string): number | null {
 
 export function parseEc8a(lines: OcrLine[], parties: string[]): ParsedSheet {
   const figures: ResultFigures = { registered: NaN, accredited: NaN, rejected: NaN, totalValid: NaN, votes: {} };
+  const ballots: BallotPapers = {};
   const confidence: Record<string, number> = {};
   let sheetPuCode: string | null = null;
   let serialNo: string | null = null;
@@ -67,11 +80,21 @@ export function parseEc8a(lines: OcrLine[], parties: string[]): ParsedSheet {
     if (sn && !serialNo) serialNo = sn[2];
 
     for (const [field, re] of HEADER_PATTERNS) {
-      if (Number.isNaN(figures[field]) && re.test(text)) {
-        // number on the same line after the label, else on the next line
-        const after = text.replace(re, ' ').replace(/^[^\d]*/, '');
+      const m = Number.isNaN(figures[field]) ? re.exec(text) : null;
+      if (m) {
+        // number on the same line after the label (not the item number printed before it), else on the next line
+        const after = text.slice(m.index + m[0].length);
         const n = firstInt(after) ?? firstInt(lines[i + 1]?.text ?? '');
         if (n !== null) { figures[field] = n; confidence[field] = c; }
+      }
+    }
+
+    for (const [field, re] of BALLOT_PATTERNS) {
+      const m = ballots[field] === undefined ? re.exec(text) : null;
+      if (m) {
+        const after = text.slice(m.index + m[0].length);
+        const n = firstInt(after) ?? firstInt(lines[i + 1]?.text ?? '');
+        if (n !== null) { ballots[field] = n; confidence[field] = c; }
       }
     }
 
@@ -94,5 +117,5 @@ export function parseEc8a(lines: OcrLine[], parties: string[]): ParsedSheet {
   for (const [field] of HEADER_PATTERNS) if (Number.isNaN(figures[field])) { missing.push(field); figures[field] = 0; confidence[field] = 0; }
   for (const p of parties) if (!(p in figures.votes)) { missing.push(`votes.${p}`); }
   const minConfidence = Object.values(confidence).length ? Math.min(...Object.values(confidence)) : 0;
-  return { figures, confidence, minConfidence: missing.length ? 0 : minConfidence, sheetPuCode, serialNo, missing };
+  return { figures, ballots, confidence, minConfidence: missing.length ? 0 : minConfidence, sheetPuCode, serialNo, missing };
 }

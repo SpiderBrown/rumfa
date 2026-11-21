@@ -159,6 +159,32 @@ describe('API endpoints and webhooks (e2e)', () => {
     await ds.query(`delete from public.checkins where id = $1`, [ck.id]); // later tests start without check-ins
   });
 
+  it('my field team: who needs following up in an area, Done hides them for an hour, and an announcement', async () => {
+    const t = (await http.get(api('/team')).set(as(SUP)).query({ area: '19-28-02' }).expect(200)).body;
+    expect(t).toMatchObject({ area: '19-28-02', childLevel: 'pu' });
+    const a4 = t.people.find((p: any) => p.id === AGENT4);
+    expect(a4.needs).toContain('notin'); // no check-in for the live election yet
+    expect(t.counts.notin).toBeGreaterThan(0);
+    // Done: off the list (shown as followed up) until the hour is over; undo brings them back
+    await http.post(api('/team/follow-ups')).set(as(SUP)).send({ volunteerId: AGENT4, need: 'notin' }).expect(204);
+    let again = (await http.get(api('/team')).set(as(SUP)).query({ area: '19-28-02' }).expect(200)).body;
+    expect(again.people.find((p: any) => p.id === AGENT4)).toMatchObject({ followed: [{ need: 'notin' }] });
+    expect(again.people.find((p: any) => p.id === AGENT4).needs).not.toContain('notin');
+    await http.post(api('/team/follow-ups/undo')).set(as(SUP)).send({ volunteerId: AGENT4 }).expect(204);
+    again = (await http.get(api('/team')).set(as(SUP)).query({ area: '19-28-02' }).expect(200)).body;
+    expect(again.people.find((p: any) => p.id === AGENT4).needs).toContain('notin');
+    // Only within your own area
+    await http.get(api('/team')).set(as(WARD)).query({ area: '20' }).expect(403);
+    await http.post(api('/team/follow-ups')).set(as('adminB')).send({ volunteerId: AGENT4, need: 'notin' }).expect(403);
+    // Announcement: in the app for everyone picked, by SMS for those not seen in the app lately
+    const r = (await http.post(api('/team/announce')).set(as(SUP)).send({ area: '19-28-02', audience: 'list', ids: [AGENT3, AGENT4], text: 'Test announcement: send turnout now' }).expect(200)).body;
+    expect(r.sent).toBe(2);
+    const out = await ds.query(`select channel, count(*)::int n from public.outbox where data->>'text' like '%Test announcement%' group by 1 order by 1`);
+    expect(out.find((o: any) => o.channel === 'push').n).toBe(2);
+    await ds.query(`delete from public.outbox where data->>'text' like '%Test announcement%'`); // the worker tests count the outbox
+    await http.post(api('/team/announce')).set(as(SUP)).send({ area: '19-28-02', audience: 'list', text: 'x y' }).expect(400);
+  });
+
   it('client B cannot see or touch client A records', async () => {
     await http.get(api(`/cases/${caseId}`)).set(as('adminB')).expect(404);
     expect((await http.get(api('/cases')).set(as('adminB')).expect(200)).body).toEqual([]);
@@ -612,5 +638,153 @@ describe('API endpoints and webhooks (e2e)', () => {
     const b = await http.post(api('/topups/batches')).set(as(ADMIN)).send({ planId: plan.body.id }).expect(201);
     await http.post(api(`/topups/batches/${b.body.batchId}/approve`)).set(as(ADMIN)).send({ approve: true }).expect(400);
     await http.get(api('/topups/plans')).set(as(SUP)).expect(403);
+  });
+
+  it('operating rules: admins set case timings and routing; new cases follow them; "stay" keeps an overdue case', async () => {
+    const s = (await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body;
+    expect(s.rules).toEqual(s.defaults);
+    expect(s.categories.some((c: any) => c.code === 'sos')).toBe(false);     // SOS can't be re-routed
+    const rules = structuredClone(s.rules);
+    rules.cases.high = { take: 4, resolve: 17, onMiss: 'up' };
+    rules.cases.medium = { take: 9, resolve: 33, onMiss: 'stay' };
+    rules.routing = { vote_buying: { queue: 'state', severity: 'high' } };
+    rules.team.silentMin = 45;
+
+    await http.put(api('/settings/rules')).set(as(SUP)).send(rules).expect(403);
+    const bad = await http.put(api('/settings/rules')).set(as(ADMIN)).send({ ...rules, cases: { ...rules.cases, low: { take: 50, resolve: 20, onMiss: 'national' } } }).expect(400);
+    expect(bad.body.message).toContain("Low: resolve time can't be shorter than take time");
+    await http.put(api('/settings/rules')).set(as(ADMIN)).send({ ...rules, routing: { sos: { severity: 'low' } } }).expect(400);
+    expect((await http.put(api('/settings/rules')).set(as(ADMIN)).send(rules).expect(200)).body).toEqual(rules);
+    const hist = (await http.get(api('/settings/rules/history')).set(as(ADMIN)).expect(200)).body;
+    expect(hist[0].changes).toEqual(expect.arrayContaining(['cases.high.take: 5 → 4', 'routing.vote_buying.severity: default → high', 'team.silentMin: 60 → 45']));
+
+    // The app is told: vote buying now starts as high, in the state room
+    const ctx = (await http.get(api('/me/context')).set(as(AGENT3)).expect(200)).body;
+    expect(ctx.categories.find((c: any) => c.code === 'vote_buying')).toMatchObject({ severity: 'high', queue_kind: 'state' });
+
+    const vb = (await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'vote_buying', clientId: uuid() }).expect(200)).body.case_id;
+    const [c1] = await ds.query(`select c.severity, q.kind, round(extract(epoch from c.due_at - c.created_at) / 60) as resolve
+      from public.cases c join public.queues q on q.id = c.queue_id where c.id = $1`, [vb]);
+    expect(c1).toEqual({ severity: 'high', kind: 'state', resolve: '17' });
+
+    // Medium with "stay": past its deadline it stays put, supervisors are told once
+    const ml = (await http.post(api('/incidents')).set(as(AGENT4)).send({ pu: '19-28-02-004', category: 'materials_late', clientId: uuid() }).expect(200)).body.case_id;
+    const [c2] = await ds.query(`select severity, round(extract(epoch from due_at - created_at) / 60) as resolve from public.cases where id = $1`, [ml]);
+    expect(c2).toEqual({ severity: 'medium', resolve: '33' });
+    await ds.query(`update public.cases set due_at = now() - interval '1 minute' where id = $1`, [ml]);
+    await ds.query(`select app.tick_cases()`);
+    await ds.query(`select app.tick_cases()`);
+    const [after] = await ds.query(`select status, overdue_at is not null as flagged,
+      (select count(*)::int from public.case_events e where e.case_id = c.id and e.kind = 'overdue') as events from public.cases c where c.id = $1`, [ml]);
+    expect(after.status).not.toBe('escalated');
+    expect(after).toMatchObject({ flagged: true, events: 1 });
+
+    // Back to the defaults, and the two cases out of the way of other tests
+    await http.put(api('/settings/rules')).set(as(ADMIN)).send(s.defaults).expect(200);
+    await ds.query(`update public.cases set status = 'closed', closed_at = now() where id = any($1)`, [[vb, ml]]);
+  });
+
+  it('chat alerts: direct messages buzz the other person (SMS when away), coordinators reach the ward, agents only raise the badge', async () => {
+    const alerts = async () => ds.query(`select to_volunteer, channel, template, data from public.outbox where template in ('new_message', 'new_message_sms') order by created_at`);
+    await ds.query(`delete from public.outbox where template in ('new_message', 'new_message_sms')`);
+    // Room staff write to an agent directly; the agent's app hasn't been seen, so an SMS goes too
+    const { channelId } = (await http.post(api('/channels/direct')).set(as(ADMIN)).send({ otherId: AGENT3 }).expect(201)).body;
+    const cid = uuid();
+    await http.post(api(`/channels/${channelId}/messages`)).set(as(ADMIN)).send({ body: 'Please send the EC8A photo', clientId: cid }).expect(201);
+    await http.post(api(`/channels/${channelId}/messages`)).set(as(ADMIN)).send({ body: 'Please send the EC8A photo', clientId: cid }).expect(201);   // app resend
+    await http.post(api(`/channels/${channelId}/messages`)).set(as(ADMIN)).send({ body: 'Thanks', clientId: uuid() }).expect(201);                  // within 2 min
+    let a = await alerts();
+    expect(a.map((x: any) => [x.to_volunteer, x.channel, x.template])).toEqual([[AGENT3, 'push', 'new_message'], [AGENT3, 'sms', 'new_message_sms']]);
+    expect(a[0].data).toMatchObject({ channel_id: channelId, text: 'Please send the EC8A photo', kind: 'direct' });
+    // Room staff aren't pushed (they see it live in the Room's Messages page)
+    await http.post(api(`/channels/${channelId}/messages`)).set(as(AGENT3)).send({ body: 'Sending now', clientId: uuid() }).expect(201);
+    expect((await alerts()).length).toBe(2);
+
+    // Ward chat: an agent's message only raises badges; the ward coordinator's reaches everyone in the ward
+    const ward = (await http.get(api('/channels/area')).set(as(WARD)).expect(200)).body.find((c: any) => c.kind === 'ward');
+    await http.post(api(`/channels/${ward.id}/messages`)).set(as(AGENT4)).send({ body: 'Anyone have spare forms?', clientId: uuid() }).expect(201);
+    expect((await alerts()).length).toBe(2);
+    await http.post(api(`/channels/${ward.id}/messages`)).set(as(WARD)).send({ body: 'Check in by 8:30 please', clientId: uuid() }).expect(201);
+    a = (await alerts()).filter((x: any) => x.data.channel_id === ward.id);
+    expect(a.map((x: any) => x.to_volunteer)).toEqual(expect.arrayContaining([AGENT3, AGENT4]));
+    expect(a.every((x: any) => x.channel === 'push' && x.to_volunteer !== WARD)).toBe(true);
+    await ds.query(`delete from public.outbox where template in ('new_message', 'new_message_sms')`);
+  });
+
+  it('messages and calls: a direct chat carries the person, their call requests and calls; the room sees the call log', async () => {
+    await http.post(api('/callbacks')).set(as(AGENT3)).send({ reason: 'unit' }).expect(201);
+    const req = (await http.get(api('/callbacks/mine')).set(as(AGENT3)).expect(200)).body;
+    // Room staff take it from Messages: start (whatever kind of call follows), then record the outcome
+    await http.post(api(`/callbacks/${req.id}/start`)).set(as(ADMIN)).expect(204);
+    await http.post(api(`/callbacks/${req.id}/start`)).set(as(AGENT4)).expect(403);
+    await ds.query(`insert into public.calls (tenant_id, caller_id, callee_id, to_phone, route, status, duration_s, reason, callback_id)
+                    values ($1, $2, $3, '+2348000000020', 'inapp', 'completed', 95, 'callback', $4)`, [T_A, ADMIN, AGENT3, req.id]);
+    const { channelId } = (await http.post(api('/channels/direct')).set(as(ADMIN)).send({ otherId: AGENT3 }).expect(201)).body;
+    const d = (await http.get(api(`/channels/${channelId}`)).set(as(ADMIN)).expect(200)).body;
+    expect(d.person).toMatchObject({ id: AGENT3, full_name: 'Agent 003', role: 'agent' });
+    expect(d.requests[0]).toMatchObject({ id: req.id, reason: 'unit', status: 'calling', attempts: 1 });
+    expect(d.calls[0]).toMatchObject({ caller_id: ADMIN, callee_id: AGENT3, status: 'completed', duration_s: 95, callee_name: 'Agent 003' });
+    // Area and case chats have no person
+    const ward = (await http.get(api('/channels/area')).set(as(WARD)).expect(200)).body.find((c: any) => c.kind === 'ward');
+    expect((await http.get(api(`/channels/${ward.id}`)).set(as(WARD)).expect(200)).body).toMatchObject({ person: null, calls: [], requests: [] });
+
+    const log = (await http.get(api('/calls/log')).set(as(ADMIN)).expect(200)).body;
+    expect(log[0]).toMatchObject({ caller_name: expect.any(String), callee_name: 'Agent 003', status: 'completed' });
+    await http.get(api('/calls/log')).set(as(AGENT3)).expect(403);
+
+    await http.post(api(`/callbacks/${req.id}/complete`)).set(as(ADMIN)).send({ answered: true, outcome: 'Sorted' }).expect(204);
+    await ds.query(`delete from public.calls where callback_id = $1`, [req.id]);
+    await ds.query(`delete from public.outbox where template in ('new_message', 'new_message_sms', 'callback_request', 'callback_request_sms')`);
+  });
+
+  it('sheet review: confirming saves the ballot papers (items 3, 4, 5, 8) when given, and checks them', async () => {
+    const pu = '19-28-02-002', v = 7;
+    await ds.query(`insert into public.irev_sheet_results (election_id, pu_code, sheet_version, registered, accredited, rejected, total_valid, votes, ocr_status)
+                    values ($1, $2, $3, 0, 0, 0, 0, '{}', 'needs_review')`, [LIVE, pu, v]);
+    const base = { electionId: LIVE, pu, version: v, registered: 500, accredited: 300, rejected: 5, totalValid: 280, votes: { APC: 200, PDP: 80 } };
+    // Issued 300 but used (2 + 5 + 280 = 287) + unused 20 = 307; and item 8 written as 290
+    await http.post(api('/irev/sheets/confirm')).set(as(ADMIN)).send({ ...base, ballotsReceived: 300, unused: 20, spoiled: 2, used: 290 }).expect(204);
+    let [r] = await ds.query(`select ballots_received, unused, spoiled, used, ocr_status, check_issues from public.irev_sheet_results where election_id = $1 and pu_code = $2 and sheet_version = $3`, [LIVE, pu, v]);
+    expect(r).toMatchObject({ ballots_received: 300, unused: 20, spoiled: 2, used: 290, ocr_status: 'confirmed' });
+    expect(r.check_issues.map((i: any) => i.code).sort()).toEqual(['ballots_unbalanced', 'used_mismatch']);
+    // Without them (unreadable on the sheet): stored empty, no ballot checks
+    await http.post(api('/irev/sheets/confirm')).set(as(ADMIN)).send(base).expect(204);
+    [r] = await ds.query(`select ballots_received, used, check_issues from public.irev_sheet_results where election_id = $1 and pu_code = $2 and sheet_version = $3`, [LIVE, pu, v]);
+    expect(r).toEqual({ ballots_received: null, used: null, check_issues: [] });
+    await http.post(api('/irev/sheets/confirm')).set(as(ADMIN)).send({ ...base, unused: -1 }).expect(400);
+    await ds.query(`delete from public.irev_sheet_results where election_id = $1 and pu_code = $2 and sheet_version = $3`, [LIVE, pu, v]);
+  });
+
+  it('the seat caps the hierarchy: a governor\'s cases move up only to the state room; an LGA chairman has no state chat', async () => {
+    await ds.query(`update public.tenants set seat = 'governorship', seat_area = '19' where id = $1`, [T_A]);
+    const [lvl] = await ds.query(`select app.seat_level($1) as level, (select kind from public.queues where id = app.top_queue($1, '19-28-02-003')) as top`, [T_A]);
+    expect(lvl).toEqual({ level: 'state', top: 'state' });
+    expect((await http.get(api('/settings')).set(as(ADMIN)).expect(200)).body.hierarchy).toMatchObject({ level: 'state', seat: 'governorship', topRoom: expect.any(String) });
+
+    // A security case escalated by a supervisor goes to the state room, not the national room
+    const id = (await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'thugs', clientId: uuid() }).expect(200)).body.case_id;
+    await http.post(api(`/cases/${id}/escalate`)).set(as(SUP)).send({ text: 'Needs the state room' }).expect(204);
+    let [c] = await ds.query(`select c.status, q.kind from public.cases c join public.queues q on q.id = c.queue_id where c.id = $1`, [id]);
+    expect(c).toEqual({ status: 'escalated', kind: 'state' });
+    // Already in the top room and out of time: it stays there and its supervisors are told (never national)
+    await ds.query(`update public.cases set status = 'queued', due_at = now() - interval '1 minute' where id = $1`, [id]);
+    await ds.query(`select app.tick_cases()`);
+    [c] = await ds.query(`select c.status, q.kind, c.overdue_at is not null as flagged from public.cases c join public.queues q on q.id = c.queue_id where c.id = $1`, [id]);
+    expect(c.kind).toBe('state');
+    expect(c.flagged).toBe(true);
+    // A report routed to "national" goes to the client's own room instead
+    await ds.query(`update public.tenants set settings = jsonb_set(settings, '{rules}', '{"routing":{"thugs":{"queue":"national"}}}') where id = $1`, [T_A]);
+    const [r] = await ds.query(`select kind from public.queues where id = app.route_queue($1, 'thugs', '19-28-02-003')`, [T_A]);
+    expect(r.kind).toBe('state');
+    await ds.query(`update public.tenants set settings = settings - 'rules' where id = $1`, [T_A]);
+
+    // LGA chairman: team chats stop at the LGA
+    await ds.query(`update public.tenants set seat = 'chairman', seat_area = '19-28' where id = $1`, [T_A]);
+    const kinds = (await http.get(api('/channels/area')).set(as(AGENT3)).expect(200)).body.map((x: any) => x.kind).sort();
+    expect(kinds).toEqual(['lga', 'ward']);
+
+    await ds.query(`update public.tenants set seat = null, seat_area = null where id = $1`, [T_A]);
+    await ds.query(`update public.cases set status = 'closed', closed_at = now() where id = $1`, [id]);
+    expect((await http.get(api('/channels/area')).set(as(AGENT3)).expect(200)).body.map((x: any) => x.kind).sort()).toEqual(['lga', 'state', 'ward']);
   });
 });

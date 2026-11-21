@@ -24,12 +24,15 @@ export const routes: Routes = [
       { path: 'room', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
       // A case opens beside the queue
       { path: 'room/case/:id', loadComponent: () => import('./pages/room/queue').then((m) => m.QueuePage) },
+      { path: 'team', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/team').then((m) => m.TeamPage) },
       { path: 'election-day', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/election-day').then((m) => m.ElectionDayPage) },
       { path: 'map', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/map').then((m) => m.MapPage) },
       { path: 'polling-day', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/polling-day').then((m) => m.PollingDayPage) },
       { path: 'checkins', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/checkins').then((m) => m.CheckinsPage) },
       { path: 'live-count', canActivate: [roles('operator', 'supervisor', 'analyst', 'legal', 'security', 'admin')], loadComponent: () => import('./pages/live-count').then((m) => m.LiveCountPage) },
-      { path: 'callbacks', loadComponent: () => import('./pages/callbacks').then((m) => m.CallbacksPage) },
+      { path: 'messages', loadComponent: () => import('./pages/messages').then((m) => m.MessagesPage) },
+      // Call requests now live in Messages and calls
+      { path: 'callbacks', redirectTo: 'messages?f=requests' },
       { path: 'results', canActivate: [roles('analyst', 'supervisor', 'admin', 'legal', 'operator')], loadComponent: () => import('./pages/results').then((m) => m.ResultsPage) },
       { path: 'irev', canActivate: [roles('analyst', 'supervisor', 'admin')], loadComponent: () => import('./pages/irev').then((m) => m.IrevPage) },
       { path: 'irev/review', canActivate: [roles('analyst', 'supervisor', 'admin', 'legal')], loadComponent: () => import('./pages/irev-review').then((m) => m.IrevReviewPage) },

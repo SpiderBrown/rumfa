@@ -8,7 +8,8 @@ import { setWorkerContext } from '../src/worker/context';
 import { processUnit, type Job } from '../src/worker/irev/jobs';
 import { drainOutbox } from '../src/worker/notify/outbox';
 import { processTopups } from '../src/worker/topups/send';
-import { createTestApp } from './setup';
+import request from 'supertest';
+import { createTestApp, sessionFor } from './setup';
 
 const T_A = 'a1a1a1a1-0000-4000-8000-000000000001';
 const LIVE = '2027a000-0000-4000-8000-000000000001';
@@ -63,6 +64,50 @@ describe('Worker jobs on the database (e2e, providers faked)', () => {
     expect(stored.bytes.length).toBeGreaterThan(1000);
     const [alert] = await ds.query(`select rule, details from public.alerts where tenant_id = $1 and pu_code = '19-28-02-005'`, [T_A]);
     expect(alert).toMatchObject({ rule: 'duplicate_sheet', details: { same_as: ['19-28-02-003'] } });
+  });
+
+  it('IReV links only: saves INEC\'s link instead of the file, reads it from the link, shows it through the API', async () => {
+    const job: Job = { id: '00000000-0000-4000-8000-000000000000', tenant_id: T_A, election_id: LIVE, job_type: 'baseline',
+      area_level: 'ward', area_code: '19-28-02', auto_recheck: false, interval_min: 10, status: 'running', counts: {}, keep: 'link' };
+    let fetched = 0;
+    global.fetch = (async (url: any) => {
+      if (!String(url).startsWith('https://cdn.test/004')) return new Response('no', { status: 404 });
+      fetched++;
+      const r = new Response(readFileSync(resolve(SAMPLES, 'ec8a_19-28-02-003_thumb.jpg')), { headers: { 'content-type': 'image/jpeg' } });
+      Object.defineProperty(r, 'url', { value: String(url) });
+      return r;
+    }) as any;
+    const doc = (id: string, url: string) => ({ _id: 'u4', pu_code: '19/28/02/004', name: 'Unit 4', document: { _id: id, url } });
+    expect(await processUnit(job, doc('d4', 'https://cdn.test/004_thumb.jpg'))).toBe('linked');
+    expect(fetched).toBe(0);                                                    // nothing downloaded
+    expect(await processUnit(job, doc('d4', 'https://cdn.test/004_thumb.jpg'))).toBe('linked');
+    let [av] = await ds.query(`select status, storage_path, sheet_url, seen_doc_ids from public.irev_availability where election_id = $1 and pu_code = '19-28-02-004'`, [LIVE]);
+    expect(av).toEqual({ status: 'on_irev', storage_path: null, sheet_url: 'https://cdn.test/004_thumb.jpg', seen_doc_ids: ['d4'] });
+    // INEC replaces the sheet: the new link is kept and the unit marked replaced
+    expect(await processUnit(job, doc('d4b', 'https://cdn.test/004b_thumb.jpg'))).toBe('replaced');
+    [av] = await ds.query(`select status, storage_path, sheet_url, replaced_count from public.irev_availability where election_id = $1 and pu_code = '19-28-02-004'`, [LIVE]);
+    expect(av).toEqual({ status: 'replaced', storage_path: null, sheet_url: 'https://cdn.test/004b_thumb.jpg', replaced_count: 1 });
+
+    // Figures are read by streaming the sheet from the link; still nothing stored
+    const { ocrIrevSheet } = await import('../src/worker/ocr/pipeline');
+    expect(['read', 'needs_review']).toContain(await ocrIrevSheet(LIVE, '19-28-02-004'));
+    expect(fetched).toBe(1);
+    expect((await ds.query(`select storage_path from public.irev_availability where election_id = $1 and pu_code = '19-28-02-004'`, [LIVE]))[0].storage_path).toBeNull();
+
+    // Review shows it through the API: a signed link that passes the sheet through from INEC
+    const http = request(app.getHttpServer());
+    const tok = await sessionFor(app, 'b0000000-0000-4000-8000-000000000001');
+    const v = (await http.post('/api/v1/media/view-url').set({ Authorization: `Bearer ${tok}` }).send({ kind: 'irev', electionId: LIVE, pu: '19-28-02-004' }).expect(200)).body;
+    expect(v.source).toBe('inec');
+    const path = new URL(v.url).pathname + new URL(v.url).search;
+    const img = await http.get(path).expect(200);
+    expect(img.headers['content-type']).toContain('image/jpeg');
+    expect(img.body.length).toBeGreaterThan(1000);
+    await http.get(path.replace(/sig=[^&]+/, 'sig=forged')).expect(404);
+
+    for (const t of ['irev_sheet_results', 'ocr_extractions', 'irev_check_log', 'irev_availability']) {
+      await ds.query(`delete from public.${t} where election_id = $1 and pu_code = '19-28-02-004'`, [LIVE]);
+    }
   });
 
   it('top-ups: an approved batch is sent once, confirmed people get an SMS', async () => {

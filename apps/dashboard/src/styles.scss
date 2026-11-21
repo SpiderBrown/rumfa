@@ -81,3 +81,8 @@ a { color: #0f5e8c; }
 .r-seg button.on { background: #fff; color: var(--r-ink); box-shadow: 0 1px 3px rgba(20, 23, 31, .15); }
 .r-seg button:focus-visible, .r-focus:focus-visible { outline: 2px solid var(--r-accent); outline-offset: 2px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Photo and video preview (core/media.ts) */
+.media-viewer-panel .mat-mdc-dialog-surface { background: #0b0f16; border-radius: 0; }
+.media-viewer-panel .mat-mdc-dialog-container { --mdc-dialog-container-shape: 0; }
+.media-viewer-backdrop { background: rgba(5, 8, 12, .85); }

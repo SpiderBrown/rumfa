@@ -17,6 +17,7 @@ import { Api } from '../../core/api';
 import { Calls } from '../../core/calls';
 import { AgoPipe, SEVERITY_COLOR, Ui, label, minutesText, placeLine, reportsLine } from '../../core/ui';
 import { LiveViewer } from './live-viewer';
+import { MediaItem, MediaThumb, MediaViewer, mediaType } from '../../core/media';
 import type { CaseRow } from './queue';
 
 interface Person { id: string; full_name: string; phone: string; role: string; level: string; area_code: string; deputy_of?: string | null }
@@ -25,7 +26,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
 @Component({
   selector: 'app-case-detail',
   imports: [RouterLink, FormsModule, JsonPipe, MatButtonModule, MatCardModule, MatDividerModule, MatFormFieldModule, MatIconModule,
-    MatInputModule, MatListModule, MatMenuModule, MatSelectModule, MatTabsModule, MatTooltipModule, AgoPipe, LiveViewer],
+    MatInputModule, MatListModule, MatMenuModule, MatSelectModule, MatTabsModule, MatTooltipModule, AgoPipe, LiveViewer, MediaThumb],
   template: `
   @if (c(); as c) {
   <div class="wrap" [class.embedded]="embedded()">
@@ -86,6 +87,15 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
 
   <div class="grid">
     <section>
+      @if (evidence().length) {
+        <div class="evidence" aria-label="Photos and videos">
+          <div class="evh"><b>Evidence</b><span class="muted">{{ evidenceLine() }}</span><span class="grow"></span>
+            <button mat-button (click)="viewer.open(evidence())"><mat-icon>fullscreen</mat-icon> View all</button></div>
+          <div class="strip">
+            @for (e of evidence(); track $index) { <app-media-thumb [items]="evidence()" [index]="$index" [size]="$first ? 220 : 132" [height]="$first ? 160 : 99" /> }
+          </div>
+        </div>
+      }
       <mat-tab-group>
         <mat-tab label="Reports ({{ incidents().length + alerts().length }})">
           @for (i of incidents(); track i.id) {
@@ -93,7 +103,9 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
               <div><b>{{ catLabel(i.category) }}</b> · {{ i.severity }} @if (i.is_sos) { <span class="crit">SOS</span> } · {{ i.source }} · {{ i.reported_at | ago }}</div>
               <div>{{ i.volunteer?.full_name }} ({{ label(i.volunteer?.role) }}) at {{ i.pu_code }}</div>
               @if (i.description) { <div class="desc">{{ i.description }}</div> }
-              @for (m of i.media_paths; track $index) { <button mat-button (click)="openMedia({ kind: 'incident', id: i.id, index: $index })"><mat-icon>image</mat-icon> Photo {{ $index + 1 }}</button> }
+              @if (i.media_paths?.length) {
+                <div class="thumbs">@for (m of i.media_paths; track $index) { <app-media-thumb [items]="evidence()" [index]="evIndex('incident', i.id, $index)" [size]="104" [height]="78" /> }</div>
+              }
             </div>
           }
           @for (a of alerts(); track a.id) {
@@ -120,7 +132,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
           <div class="chat">
             @for (m of messages(); track m.id) {
               <div class="msg" [class.mine]="m.sender_id === me()"><span class="who">{{ m.sender_id === me() ? 'You' : (m.sender_name ?? personName(m.sender_id)) }}</span> {{ m.body }}
-                @if (m.media_path) { <button mat-button (click)="openMedia({ kind: 'message', id: m.id })">{{ m.kind }}</button> }
+                @if (m.media_path) { <div class="thumbs"><app-media-thumb [items]="evidence()" [index]="evIndex('message', m.id)" [size]="140" [height]="105" /></div> }
                 <span class="when">{{ m.created_at | ago }}</span></div>
             }
           </div>
@@ -166,7 +178,7 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
           <mat-card-subtitle>{{ label(lv.status) }}</mat-card-subtitle></mat-card-header>
           <mat-card-content>
             @if (lv.status === 'live') { <app-live-viewer [requestId]="lv.id" /> }
-            @if (lv.status === 'clip_uploaded') { <button mat-flat-button (click)="openMedia({ kind: 'live', id: lv.id })">Play clip</button> }
+            @if (lv.status === 'clip_uploaded') { <button mat-flat-button (click)="viewer.open([{ ref: { kind: 'live', id: lv.id }, type: 'video', caption: 'Clip from the live view' }])"><mat-icon>play_arrow</mat-icon> Play clip</button> }
             @if (lv.status === 'declined') { <p>The agent declined. Call them instead.</p> }
           </mat-card-content>
         </mat-card>
@@ -176,6 +188,10 @@ interface Contact { id: string; agency: string; title: string; person_name: stri
   </div>
   }`,
   styles: `
+    .evidence { border: 1px solid var(--r-line); border-radius: 12px; background: #fff; padding: 12px 14px; margin-bottom: 12px; }
+    .evh { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; } .evh .grow { flex: 1; }
+    .strip { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+    .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; color: var(--mat-sys-primary); }
     .where { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-on-surface-variant); margin-bottom: 4px; }
     .where mat-icon { font-size: 18px; width: 18px; height: 18px; } .where .code { color: var(--mat-sys-outline); font-size: 12px; margin-left: 4px; }
@@ -217,6 +233,36 @@ export class CaseDetailPage implements OnDestroy {
 
   c = signal<(CaseRow & { merged_into: string | null }) | null>(null);
   incidents = signal<any[]>([]);
+  viewer = inject(MediaViewer);
+  /** Every photo, video and voice note on the case: reports first (oldest first), then the chat */
+  evidence = computed<(MediaItem & { key: string })[]>(() => {
+    const out: (MediaItem & { key: string })[] = [];
+    const when = (t: string) => new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    for (const i of [...this.incidents()].sort((a, b) => a.reported_at.localeCompare(b.reported_at))) {
+      (i.media_paths ?? []).forEach((p: string, n: number) => out.push({
+        key: `incident:${i.id}:${n}`, ref: { kind: 'incident', id: i.id, index: n }, type: mediaType(p),
+        caption: `${this.catLabel(i.category)} · ${i.volunteer?.full_name ?? 'Agent'}`,
+        meta: [{ label: 'Sent by', value: `${i.volunteer?.full_name ?? 'Agent'} (${label(i.volunteer?.role)})` },
+          { label: 'Reported', value: when(i.reported_at) }, { label: 'Polling unit', value: i.pu_code },
+          { label: 'Sent from', value: i.source === 'app' ? 'Agent app camera' : label(i.source) }],
+      }));
+    }
+    for (const m of this.messages()) {
+      if (!m.media_path) continue;
+      const who = m.sender_id === this.me() ? 'You' : (m.sender_name ?? this.personName(m.sender_id));
+      out.push({ key: `message:${m.id}`, ref: { kind: 'message', id: m.id }, type: mediaType(m.kind === 'photo' ? m.media_path : m.kind),
+        caption: `Chat · ${who}${m.body ? ' · ' + m.body : ''}`,
+        meta: [{ label: 'Sent by', value: who }, { label: 'Sent', value: when(m.created_at) }] });
+    }
+    return out;
+  });
+  evidenceLine = computed(() => {
+    const n = (t: string) => this.evidence().filter((e) => e.type === t).length;
+    const parts = [[n('image'), 'photo'], [n('video'), 'video'], [n('audio'), 'voice note']].filter(([c]) => c)
+      .map(([c, w]) => `${c} ${w}${c === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+  });
+  evIndex(kind: string, id: string, n?: number) { return Math.max(0, this.evidence().findIndex((e) => e.key === (kind === 'incident' ? `incident:${id}:${n}` : `message:${id}`))); }
   alerts = signal<any[]>([]);
   readonly reportsLine = reportsLine;
   events = signal<any[]>([]);

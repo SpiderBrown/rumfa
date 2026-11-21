@@ -12,6 +12,8 @@ export interface Job {
   id: string; tenant_id: string; election_id: string; job_type: 'baseline' | 'live' | 'ocr' | 'recheck';
   area_level: string; area_code: string; auto_recheck: boolean; interval_min: number; status: string;
   counts: Record<string, number>;
+  /** file: download each sheet into our storage (as before); link: keep only INEC's link to it */
+  keep?: 'file' | 'link';
 }
 
 /** Claim one due job (queued, or a live job whose next recheck is due). */
@@ -113,7 +115,8 @@ export async function runJob(job: Job): Promise<void> {
 async function unitsWithStatus(job: Job, statuses: string[], ocr: string[]): Promise<string[]> {
   const rows = await q(
     `select pu_code from public.irev_availability
-      where election_id = $1 and status = any($2) and ocr_status = any($3) and ($4::text = 'NG' or pu_code like $4 || '%')
+      where election_id = $1 and (status = any($2) or (storage_path is null and sheet_url is not null))
+        and ocr_status = any($3) and ($4::text = 'NG' or pu_code like $4 || '%')
       order by pu_code`,
     [job.election_id, statuses, ocr, job.area_code]);
   return rows.map((r) => r.pu_code);
@@ -157,6 +160,8 @@ export async function processUnit(job: Job, u: IrevUnit): Promise<string> {
   const isNew = !seen.includes(docId);
   const replaced = isNew && seen.length > 0;
   if (!isNew && cur?.status === 'downloaded') { await record({ status: 'downloaded' }); return 'downloaded'; }
+  // Link only: nothing new since we saved its link, and no download asked for
+  if (!isNew && job.keep === 'link' && cur?.sheet_url) { await record({ status: cur.status }); return 'linked'; }
 
   const urls = documentUrls(doc);
   const seenNow = isNew ? [...seen, docId] : seen;
@@ -169,6 +174,8 @@ export async function processUnit(job: Job, u: IrevUnit): Promise<string> {
     // older versions listed by IReV also count as replacements
     replaced_count: u.old_documents?.length && !cur ? u.old_documents.length : (cur?.replaced_count ?? 0) + (replaced ? 1 : 0),
   };
+
+  if (job.keep === 'link' && urls.length) return keepLink(job, pu, base, urls, replaced, record);
 
   const errors: string[] = [];
   let offline = urls.length > 0; // stays true while every URL failed for lack of a connection
@@ -216,6 +223,23 @@ export async function processUnit(job: Job, u: IrevUnit): Promise<string> {
     || (dead.length ? `IReV lists this sheet only on servers that no longer exist (${[...new Set(dead.map((u) => new URL(u).host))].join(', ')})` : '');
   await record({ ...base, status: urls.length ? 'failed' : 'on_irev', attempts: (cur?.attempts ?? 0) + 1, last_error: lastErr || 'No usable URL' });
   return urls.length ? 'failed' : 'on_irev';
+}
+
+/**
+ * Link only: save INEC's link to the sheet instead of downloading it (saves storage). The sheet is shown in
+ * review straight from INEC, and its figures are read by streaming it from INEC (nothing is kept). A sheet
+ * downloaded earlier keeps its file. Duplicate-image checks need the file, so they only run on downloads.
+ */
+async function keepLink(job: Job, pu: string, base: Record<string, unknown>, urls: string[], replaced: boolean,
+                        record: (patch: Record<string, unknown>, detail?: unknown) => Promise<void>): Promise<string> {
+  // A new version of the sheet makes any old copy and its figures stale
+  const fresh = replaced ? { storage_path: null, checksum: null, phash: null, size_bytes: null, ocr_status: 'not_read' } : {};
+  await record({ ...base, ...fresh, status: replaced ? 'replaced' : 'on_irev', sheet_url: urls[0], last_error: null }, { url: urls[0], replaced, keep: 'link' });
+  if (job.job_type === 'live') {
+    try { await ocrIrevSheet(job.election_id, pu); } catch (e) { log('ocr', `${pu}: ${(e as Error).message}`); }
+  }
+  if (replaced) await q(`select public.svc_verify_unit($1, $2)`, [job.election_id, pu]);
+  return replaced ? 'replaced' : 'linked';
 }
 
 /**

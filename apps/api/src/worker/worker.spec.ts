@@ -42,6 +42,19 @@ test('EC8A parser reads header, parties and cross-checks words', () => {
   assert.ok(p.minConfidence >= 0.9);
 });
 
+test('EC8A parser picks up the ballot papers (items 3, 4, 5, 8) without mixing "used" and "unused"', () => {
+  const p = parseEc8a([
+    { text: '3. Number of Ballot Papers issued to the Polling Unit 300', confidence: 0.9 },
+    { text: '4. Number of Unused Ballot Papers 30', confidence: 0.9 },
+    { text: '5. Number of Spoilt Ballot Papers 5', confidence: 0.9 },
+    { text: '8. Total Number of Used Ballot Papers', confidence: 0.8 },
+    { text: '270', confidence: 0.8 },
+  ], ['APC']);
+  assert.deepEqual(p.ballots, { ballots_received: 300, unused: 30, spoiled: 5, used: 270 });
+  assert.equal(p.confidence['used'], 0.8);
+  assert.ok(!p.missing.includes('used'), 'ballot papers are never required');
+});
+
 test('EC8A parser lowers confidence when figures and words disagree', () => {
   const p = parseEc8a([{ text: 'APC 93 eighty three', confidence: 0.95 }], ['APC']);
   assert.ok(p.confidence['votes.APC'] <= 0.4);

@@ -76,6 +76,7 @@ export class App {
       if (d.template === 'app_call' && d.call_id) void this.calls.incoming(d.call_id);
       else if (d.template === 'live_view_request') void this.router.navigate(['/live', d.request_id]);
       else if (d.template === 'callback_request') void this.router.navigateByUrl('/coord/callbacks');
+      else if (d.template === 'new_message' && d.channel_id) void this.router.navigate(['/chat', d.channel_id]);
       else if (d.case_id) void this.router.navigateByUrl('/messages');
     });
     await PushNotifications.register();

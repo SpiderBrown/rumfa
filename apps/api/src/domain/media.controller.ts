@@ -59,7 +59,7 @@ export class MediaController {
   /** A view link for a file attached to a record the caller can see (the database decides). */
   @Post('media/view-url') @HttpCode(200)
   async view(@CurrentUser() u: AuthUser, @Body() b: ViewDto) {
-    const { bucket, path } = await this.db.asUser(u, async (q) => {
+    const found: { bucket: Bucket; path: string | null; link?: string } = await this.db.asUser(u, async (q) => {
       const one = async (sql: string, params: unknown[]) => (await q(sql, params))[0];
       switch (b.kind) {
         case 'ec8a': return { bucket: 'ec8a' as Bucket, path: (await one(`select sheet_photo_path p from public.result_submissions where id = $1`, [b.id]))?.p };
@@ -71,13 +71,46 @@ export class MediaController {
           if (!ROOM.includes(u.role)) throw new ForbiddenException();
           const ok = await one(`select 1 from public.tenant_elections where tenant_id = $1 and election_id = $2`, [u.tid, b.electionId]);
           if (!ok) throw new NotFoundException();
-          return { bucket: 'irev' as Bucket, path: (await one(`select storage_path p from public.irev_availability where election_id = $1 and pu_code = $2`, [b.electionId, b.pu]))?.p };
+          const a = await one(`select storage_path p, sheet_url l from public.irev_availability where election_id = $1 and pu_code = $2`, [b.electionId, b.pu]);
+          // Only INEC's link saved: show it through this API (INEC's servers don't let a browser load it from our site)
+          if (!a?.p && a?.l && /^\d{2}-\d{2}-\d{2}-\d{3}$/.test(b.pu ?? '')) return { bucket: 'irev' as Bucket, path: null, link: `${b.electionId}/${b.pu}` };
+          return { bucket: 'irev' as Bucket, path: a?.p };
         }
       }
       return { bucket: 'ec8a' as Bucket, path: null };
     });
+    const { bucket, path } = found;
+    if ('link' in found && found.link) return { url: this.storage.apiLink('sheet-link', found.link), source: 'inec' };
     if (!path) throw new NotFoundException('File not found');
     return { url: await this.storage.viewUrl(bucket, path) };
+  }
+
+  /**
+   * An IReV sheet we only saved INEC's link to, passed through from INEC for viewing (nothing is stored).
+   * The link is signed and short-lived (from POST /media/view-url); tries INEC's other copies if one is down.
+   */
+  @Public() @Get('sheet-link/:election/:pu') @ApiExcludeEndpoint()
+  async sheetLink(@Param('election') election: string, @Param('pu') pu: string, @Query() qs: any, @Res() res: Response) {
+    if (!/^[0-9a-f-]{36}$/.test(election) || !/^\d{2}-\d{2}-\d{2}-\d{3}$/.test(pu)) throw new NotFoundException();
+    this.storage.verifyApiLink('sheet-link', `${election}/${pu}`, qs.exp, qs.sig);
+    const [a] = await this.db.system(`select sheet_url, document_url, backup_url from public.irev_availability where election_id = $1 and pu_code = $2`, [election, pu]);
+    const urls = [...new Set([a?.sheet_url, a?.document_url, a?.backup_url].filter((x): x is string => typeof x === 'string' && /^https:\/\//.test(x)))];
+    if (!urls.length) throw new NotFoundException('No link saved for this sheet');
+    let last = 'INEC did not answer';
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000), headers: { 'User-Agent': 'Rumfa sheet viewer' } });
+        if (!r.ok) { last = `INEC answered ${r.status}`; continue; }
+        const body = Buffer.from(await r.arrayBuffer());
+        res.type(r.headers.get('content-type') || (url.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'));
+        res.setHeader('Content-Disposition', 'inline');
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        res.send(body);
+        return;
+      } catch (e) { last = (e as Error).message; }
+    }
+    res.status(502).type('text/plain').send(`Could not get the sheet from INEC: ${last}`);
   }
 
   // ---- Local storage driver (development and tests): signed links served by the API itself ----

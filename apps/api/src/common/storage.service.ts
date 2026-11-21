@@ -118,6 +118,19 @@ export class StorageService {
     if (!file.startsWith(root)) throw new BadRequestException('Bad file path');
     return file;
   }
+  /**
+   * A short-lived signed link to a route of this API that serves a file we don't keep ourselves: an IReV sheet
+   * passed through from INEC's servers when only its link was saved. `route` is the route (e.g. "sheet-link"),
+   * `key` what identifies the file in it.
+   */
+  apiLink(route: string, key: string, ttl = this.cfg.viewTtlSeconds): string {
+    const exp = Math.floor(Date.now() / 1000) + ttl;
+    return `${this.publicUrl}/api/v1/${route}/${key}?exp=${exp}&sig=${this.sign('get', route, key, exp)}`;
+  }
+  verifyApiLink(route: string, key: string, exp: string, sig: string) {
+    if (!(Number(exp) >= Date.now() / 1000) || !safeEqual(sig ?? '', this.sign('get', route, key, Number(exp)))) throw new NotFoundException();
+  }
+
   verifyLocal(op: string, bucket: string, path: string, exp: string, sig: string) {
     this.check(bucket, path);
     if (!this.local(bucket) || Number(exp) < Date.now() / 1000 || !safeEqual(sig ?? '', this.sign(op, bucket, path, Number(exp)))) {

@@ -41,6 +41,18 @@ export class CallsController {
   }
 
   /** Registers an outgoing call to someone the caller can see; the voice webhook only dials registered numbers. */
+  /** Recent calls for the call log in Messages: Room staff see all of the client's calls. */
+  @Get('log') @Roles(...ROOM)
+  log(@CurrentUser() u: AuthUser) {
+    return this.db.asUser(u, (q) => q(
+      `select c.id, c.caller_id, c.callee_id, c.route, c.status, c.duration_s, c.reason, c.case_id, c.callback_id, c.started_at, c.contact_id,
+              a.full_name as caller_name, a.role as caller_role, b.full_name as callee_name, b.role as callee_role,
+              k.agency as contact_agency, k.title as contact_title
+         from public.calls c left join public.volunteers a on a.id = c.caller_id left join public.volunteers b on b.id = c.callee_id
+         left join public.authority_contacts k on k.id = c.contact_id
+        where c.tenant_id = $1 order by c.started_at desc limit 150`, [u.tid]));
+  }
+
   @Post('prepare') @HttpCode(200) @Roles(...ROOM, 'coordinator')
   async prepare(@CurrentUser() u: AuthUser, @Body() d: PrepareDto) {
     const target = await this.db.asUser(u, async (q) => {

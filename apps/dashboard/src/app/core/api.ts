@@ -49,6 +49,8 @@ export class Api {
   /** Calling options the organisation allows (dashboard → Settings). */
   /** Premium add-ons Rumfa has switched on for this organisation (Rumfa Console) */
   readonly addons = signal<{ voice: boolean; airtime: boolean }>({ voice: false, airtime: false });
+  /** The client's result rules (Settings → Results): when the vote estimate may be shown */
+  readonly resultRules = signal<{ estimateMinUnits: number; estimatePct: number }>({ estimateMinUnits: 20, estimatePct: 5 });
   readonly callOptions = signal<{ phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }>({ phone: true, bridged: true, webrtc: false, inapp: false });
 
   readonly isSupervisor = computed(() => ['supervisor', 'admin'].includes(this.me()?.role ?? ''));
@@ -87,6 +89,7 @@ export class Api {
     this.staffStatus.set(ctx.staffStatus);
     if (ctx.calls) this.callOptions.set(ctx.calls);
     this.addons.set(ctx.addons ?? { voice: false, airtime: false });
+    if (ctx.rules?.results) this.resultRules.set(ctx.rules.results);
     this.connectLive();
   }
 

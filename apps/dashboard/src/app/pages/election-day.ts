@@ -366,8 +366,9 @@ export class ElectionDayPage implements AfterViewInit, OnDestroy {
   });
 
   /** An estimate means something only once enough units are in: at least 20, and 5% of the area */
-  canEstimate = computed(() => { const t = this.t(); return t.reported >= Math.max(20, Math.ceil(t.units * 0.05)); });
-  neededForEstimate = computed(() => Math.max(20, Math.ceil(this.t().units * 0.05)));
+  // When the estimate may be shown: the client's rule (Settings → Results), by default 20 units and 5% of them
+  neededForEstimate = computed(() => { const r = this.api.resultRules(); return Math.max(r.estimateMinUnits, Math.ceil(this.t().units * r.estimatePct / 100)); });
+  canEstimate = computed(() => this.t().reported >= this.neededForEstimate());
   parties = computed(() => {
     const d = this.data(), t = this.t();
     if (!d) return [];

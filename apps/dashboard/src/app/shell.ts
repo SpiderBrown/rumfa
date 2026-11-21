@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, HostListener, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -8,9 +8,10 @@ import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from './core/api';
 import { Calls } from './core/calls';
+import { Inbox } from './core/inbox';
 import { Ui, label } from './core/ui';
 
-interface NavItem { path: string; icon: string; text: string; roles?: string[]; addon?: 'voice' | 'airtime'; exact?: boolean }
+interface NavItem { path: string; icon: string; text: string; roles?: string[]; addon?: 'voice' | 'airtime'; exact?: boolean; count?: 'inbox' }
 interface NavGroup { title: string; items: NavItem[] }
 
 const WATCH = ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'];
@@ -18,7 +19,8 @@ const WATCH = ['operator', 'supervisor', 'analyst', 'legal', 'security', 'admin'
 const NAV: NavGroup[] = [
   { title: 'Operate', items: [
     { path: '/room', icon: 'support_agent', text: 'Situation room' },
-    { path: '/callbacks', icon: 'phone_callback', text: 'Callback requests' },
+    { path: '/team', icon: 'diversity_3', text: 'My field team', roles: WATCH },
+    { path: '/messages', icon: 'forum', text: 'Messages and calls', count: 'inbox' },
     { path: '/contacts', icon: 'contact_phone', text: 'Authority contacts' },
   ] },
   // One page for the day; its detailed views (check-ins, figures, live count, results, full map) open from it
@@ -38,22 +40,30 @@ const NAV: NavGroup[] = [
   ] },
 ];
 
+function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1'; } catch { return false; } }
+
 @Component({
   selector: 'app-shell',
   imports: [RouterOutlet, RouterLink, RouterLinkActive, MatSidenavModule, MatToolbarModule, MatIconModule,
     MatButtonModule, MatButtonToggleModule, MatTooltipModule],
   template: `
-  <mat-sidenav-container class="shell">
-    <mat-sidenav mode="side" opened class="nav">
+  <mat-sidenav-container class="shell" autosize>
+    <mat-sidenav mode="side" opened class="nav" [class.slim]="slim()">
       <nav aria-label="Main">
         <div class="brand"><span class="mark" aria-hidden="true">{{ initial() }}</span>
-          <span class="bname"><b>{{ api.brand() }}</b><small>Rumfa Room</small></span></div>
+          @if (!slim()) { <span class="bname"><b>{{ api.brand() }}</b><small>Rumfa Room</small></span> }
+          <button type="button" class="fold" (click)="toggleNav()" [attr.aria-label]="slim() ? 'Expand the menu' : 'Collapse the menu'"
+                  [attr.aria-expanded]="!slim()" [matTooltip]="(slim() ? 'Expand menu' : 'Collapse menu') + ' ( [ )'" matTooltipPosition="right">
+            <mat-icon aria-hidden="true">{{ slim() ? 'left_panel_open' : 'left_panel_close' }}</mat-icon></button>
+        </div>
         @for (g of nav(); track g.title) {
           <div class="group">
-            <div class="gtitle">{{ g.title }}</div>
+            @if (slim()) { <div class="gsep" aria-hidden="true"></div> } @else { <div class="gtitle">{{ g.title }}</div> }
             @for (n of g.items; track n.path) {
-              <a class="item" [routerLink]="n.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: !!n.exact }" ariaCurrentWhenActive="page">
-                <mat-icon aria-hidden="true">{{ n.icon }}</mat-icon><span>{{ n.text }}</span>
+              <a class="item" [routerLink]="n.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: !!n.exact }" ariaCurrentWhenActive="page"
+                 [matTooltip]="slim() ? n.text : ''" matTooltipPosition="right" [attr.aria-label]="slim() ? n.text : null">
+                <mat-icon aria-hidden="true">{{ n.icon }}</mat-icon>@if (!slim()) { <span>{{ n.text }}</span> }
+                @if (n.count === 'inbox' && inbox.attention(); as u) { <span class="cnt" [attr.aria-label]="u + ' waiting'">{{ u > 99 ? '99+' : u }}</span> }
               </a>
             }
           </div>
@@ -98,7 +108,17 @@ const NAV: NavGroup[] = [
   </mat-sidenav-container>`,
   styles: `
     .shell { height: 100vh; }
-    .nav { width: 240px; border: 0; background: var(--r-nav); color: #fff; }
+    .nav { width: 240px; border: 0; background: var(--r-nav); color: #fff; transition: width .18s ease; }
+    .nav.slim { width: 68px; }
+    .nav.slim nav { padding: 18px 10px 24px; }
+    .nav.slim .brand { flex-direction: column; gap: 12px; padding: 0 0 4px; }
+    .nav.slim .item { justify-content: center; padding: 9px 0; position: relative; }
+    .nav.slim .item .cnt { position: absolute; top: 2px; right: 4px; padding: 0 5px; font-size: 10px; }
+    .gsep { height: 1px; background: #253041; margin: 0 8px 8px; }
+    .fold { margin-left: auto; width: 32px; height: 32px; border-radius: 8px; border: 0; background: none; color: #8693a4; display: grid; place-items: center; cursor: pointer; }
+    .nav.slim .fold { margin-left: 0; }
+    .fold:hover { background: #1e2836; color: #fff; } .fold:focus-visible { outline: 2px solid #5eead4; outline-offset: 1px; }
+    .fold mat-icon { font-size: 20px; width: 20px; height: 20px; }
     .nav nav { display: flex; flex-direction: column; gap: 18px; padding: 18px 12px 24px; }
     .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 4px; }
     .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--r-accent); display: grid; place-items: center; font-weight: 800; font-size: 15px; }
@@ -109,6 +129,7 @@ const NAV: NavGroup[] = [
     .item mat-icon { font-size: 19px; width: 19px; height: 19px; color: #8693a4; }
     .item:hover { background: #1e2836; color: #fff; } .item:hover mat-icon { color: #c9d1dc; }
     .item:focus-visible { outline: 2px solid #5eead4; outline-offset: 1px; }
+    .item .cnt { margin-left: auto; background: #b42318; color: #fff; font-size: 11px; font-weight: 700; border-radius: 10px; padding: 1px 7px; }
     .item.active { background: var(--r-accent); color: #fff; font-weight: 600; } .item.active mat-icon { color: #fff; }
     .support { background: #fff1e0; border: 1px solid #fb923c; color: #7a3d00; border-radius: 12px; padding: 2px 10px; font-size: 12px; margin-right: 8px; }
     .top { position: sticky; top: 0; z-index: 2; gap: 12px; height: 56px; background: #fff; border-bottom: 1px solid var(--r-line); font: var(--mat-sys-body-medium); }
@@ -127,6 +148,15 @@ export class Shell {
   label = label;
   status = signal('offline');
   // Premium add-ons (voice, airtime) show only when Rumfa has switched them on for the organisation
+  inbox = inject(Inbox);
+  /** Menu folded to an icon rail; remembered on this computer */
+  slim = signal(readFold());
+  toggleNav() { this.slim.update((v) => !v); try { localStorage.setItem('rumfa.nav.slim', this.slim() ? '1' : '0'); } catch { /* private mode */ } }
+  @HostListener('document:keydown', ['$event'])
+  key(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (e.key === '[' && !e.ctrlKey && !e.metaKey && !e.altKey && !(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) { e.preventDefault(); this.toggleNav(); }
+  }
   nav = computed(() => {
     const role = this.api.me()?.role ?? '', addons = this.api.addons();
     return NAV.map((g) => ({ ...g, items: g.items.filter((n) => (!n.roles || n.roles.includes(role)) && (!n.addon || addons[n.addon])) }))
@@ -142,6 +172,8 @@ export class Shell {
     // App calls ringing for me, answered or ended
     this.stopCalls = this.api.onChange((c) => this.calls.onCallChange(c), ['calls']);
     void this.calls.checkIncoming();
+    // Unread messages on the menu, from anywhere in the Room
+    this.inbox.start();
     inject(DestroyRef).onDestroy(() => this.stopCalls());
   }
 

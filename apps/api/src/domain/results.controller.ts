@@ -14,6 +14,8 @@ class JobDto {
   @ApiProperty() @IsString() @MaxLength(20) areaCode: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRecheck?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(2) @Max(240) intervalMin?: number;
+  @ApiPropertyOptional({ enum: ['file', 'link'], description: 'file: download each sheet (default); link: save only INEC\'s link to it' })
+  @IsOptional() @IsIn(['file', 'link']) keep?: 'file' | 'link';
 }
 class JobStatusDto { @ApiProperty({ enum: ['queued', 'paused', 'cancelled'] }) @IsIn(['queued', 'paused', 'cancelled']) status: string; }
 class ConfirmSheetDto {
@@ -25,6 +27,11 @@ class ConfirmSheetDto {
   @ApiProperty() @IsInt() @Min(0) rejected: number;
   @ApiProperty() @IsInt() @Min(0) totalValid: number;
   @ApiProperty() @IsObject() votes: Record<string, number>;
+  // Items 3, 4, 5 and 8 of the sheet: optional
+  @ApiPropertyOptional({ description: 'Item 3: ballot papers issued to the polling unit' }) @IsOptional() @IsInt() @Min(0) ballotsReceived?: number;
+  @ApiPropertyOptional({ description: 'Item 4: unused ballot papers' }) @IsOptional() @IsInt() @Min(0) unused?: number;
+  @ApiPropertyOptional({ description: 'Item 5: spoiled ballot papers' }) @IsOptional() @IsInt() @Min(0) spoiled?: number;
+  @ApiPropertyOptional({ description: 'Item 8: used ballot papers, as written on the sheet' }) @IsOptional() @IsInt() @Min(0) used?: number;
 }
 
 /** Results and IReV are visible to room staff; the election must be one the tenant follows. */
@@ -92,9 +99,9 @@ export class ResultsController {
   async createJob(@CurrentUser() u: AuthUser, @Body() d: JobDto) {
     await this.election(u, d.electionId);
     const [row] = await this.db.asUser(u, (q) => q(
-      `insert into public.irev_fetch_jobs (tenant_id, election_id, job_type, area_level, area_code, auto_recheck, interval_min, requested_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning *`,
-      [u.tid, d.electionId, d.jobType, d.areaLevel, d.areaCode, d.autoRecheck ?? false, d.intervalMin ?? 10, u.mid]));
+      `insert into public.irev_fetch_jobs (tenant_id, election_id, job_type, area_level, area_code, auto_recheck, interval_min, requested_by, keep)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *`,
+      [u.tid, d.electionId, d.jobType, d.areaLevel, d.areaCode, d.autoRecheck ?? false, d.intervalMin ?? 10, u.mid, d.keep ?? 'file']));
     return row;
   }
 
@@ -106,15 +113,29 @@ export class ResultsController {
   }
 
   @Get('elections/:id/parties')
-  async parties(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) e: string) {
+  async parties(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) e: string, @Query('fallback') fallback?: string) {
     await this.election(u, e);
-    return (await this.db.asUser(u, (q) => q(`select party from public.election_parties where election_id = $1 order by ballot_order`, [e]))).map((r) => r.party);
+    const ballot = (await this.db.asUser(u, (q) => q(`select party from public.election_parties where election_id = $1 order by ballot_order`, [e]))).map((r) => r.party);
+    // No ballot list set for this election: all registered parties, alphabetically (INEC's ballot order), when asked
+    if (!ballot.length && fallback === 'registered') return (await this.db.system(`select acronym from public.parties order by acronym`)).map((r) => r.acronym);
+    return ballot;
   }
 
   @Get('irev/review')
   review(@CurrentUser() u: AuthUser, @Query('election', ParseUUIDPipe) e: string) {
     return this.db.asUser(u, (q) => q(
-      `select * from public.irev_sheet_results where election_id = $1 and ocr_status = 'needs_review' order by pu_code limit 200`, [e]));
+      // With what the sheet's header shows (state, LGA, ward, unit, election), so the form can mirror it
+      `select r.*, pu.name as pu_name, pu.registered_voters as pu_registered, w.name as ward_name, l.name as lga_name, st.name as state_name,
+              el.name as election_name, el.election_type, el.election_date,
+              (a.storage_path is null and a.sheet_url is not null) as from_link
+         from public.irev_sheet_results r
+         join public.polling_units pu on pu.code = r.pu_code
+         join public.wards w on w.code = pu.ward_code
+         join public.lgas l on l.code = w.lga_code
+         join public.states st on st.code = l.state_code
+         join public.elections el on el.id = r.election_id
+         left join public.irev_availability a on a.election_id = r.election_id and a.pu_code = r.pu_code
+        where r.election_id = $1 and r.ocr_status = 'needs_review' order by r.pu_code limit 200`, [e]));
   }
 
   @Post('irev/sheets/confirm') @HttpCode(204) @Roles('analyst', 'supervisor', 'admin')
@@ -123,6 +144,7 @@ export class ResultsController {
     await this.db.asUser(u, (q) => callFn(q, 'confirm_irev_sheet', {
       p_election: d.electionId, p_pu: d.pu, p_version: d.version, p_registered: d.registered, p_accredited: d.accredited,
       p_rejected: d.rejected, p_total_valid: d.totalValid, p_votes: d.votes,
+      p_ballots_received: d.ballotsReceived, p_unused: d.unused, p_spoiled: d.spoiled, p_used: d.used,
     }));
   }
 }

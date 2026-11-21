@@ -13,10 +13,12 @@ import { Api } from '../core/api';
 import { AgoPipe, Ui, label } from '../core/ui';
 
 interface AreaRow { area_code: string; name: string; units: number; not_checked: number; not_on_irev: number; on_irev: number;
-  downloaded: number; replaced: number; failed: number; ocr_read: number; ocr_review: number; ocr_confirmed: number }
+  downloaded: number; replaced: number; failed: number; ocr_read: number; ocr_review: number; ocr_confirmed: number; linked?: number }
 interface Job { id: string; job_type: string; area_level: string; area_code: string; status: string; counts: Record<string, number>;
   auto_recheck: boolean; interval_min: number; created_at: string; started_at: string | null; finished_at: string | null;
-  next_run_at: string | null; error: string | null }
+  next_run_at: string | null; error: string | null; keep?: 'file' | 'link' }
+
+function readKeep(): 'file' | 'link' { try { return localStorage.getItem('rumfa.irev.keep') === 'link' ? 'link' : 'file'; } catch { return 'file'; } }
 
 /** IReV data manager (design section 11.5): fetch and track result sheets by state, LGA and ward. */
 @Component({
@@ -32,6 +34,16 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
     <a mat-stroked-button routerLink="/irev/review"><mat-icon>fact_check</mat-icon> Review queue</a>
   </div>
 
+  <div class="keep" role="radiogroup" aria-label="What Fetch keeps">
+    <span class="kl">Fetch keeps</span>
+    <mat-button-toggle-group [ngModel]="keep()" (ngModelChange)="setKeep($event)" hideSingleSelectionIndicator>
+      <mat-button-toggle value="file"><mat-icon>download</mat-icon> Download sheets</mat-button-toggle>
+      <mat-button-toggle value="link"><mat-icon>link</mat-icon> Links only</mat-button-toggle>
+    </mat-button-toggle-group>
+    <span class="kh">@if (keep() === 'link') { Saves INEC's link to each sheet, no file. Review shows the sheet from INEC, so it needs INEC online. }
+      @else { Keeps a copy of each sheet (up to ~15 MB each). Works even if INEC removes or changes it. }</span>
+  </div>
+
   <div class="crumbs">
     @for (c of crumbs(); track c.code; let last = $last) {
       <a (click)="go(c.code)" [class.cur]="last">{{ c.name }}</a> @if (!last) { <span>›</span> }
@@ -43,9 +55,10 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
       <td mat-cell *matCellDef="let r">
         @if (isUnitLevel()) { <a (click)="openUnit(r)">{{ r.area_code }} {{ r.name }}</a> }
         @else { <a (click)="go(r.area_code)">{{ r.name ?? r.area_code }}</a> <span class="code">{{ r.area_code }}</span> }</td></ng-container>
-    <ng-container matColumnDef="progress"><th mat-header-cell *matHeaderCellDef>Sheets downloaded</th>
-      <td mat-cell *matCellDef="let r"><mat-progress-bar mode="determinate" [value]="100 * (r.downloaded + r.replaced) / r.units" />
-        <span class="small">{{ r.downloaded + r.replaced }} / {{ r.units }}</span></td></ng-container>
+    <ng-container matColumnDef="progress"><th mat-header-cell *matHeaderCellDef>Sheets we have</th>
+      <td mat-cell *matCellDef="let r"><mat-progress-bar mode="determinate" [value]="100 * have(r) / r.units" />
+        <span class="small">{{ have(r) }} / {{ r.units }}</span>
+        @if (r.linked) { <div class="small sub">{{ r.linked }} as INEC links</div> }</td></ng-container>
     <ng-container matColumnDef="status"><th mat-header-cell *matHeaderCellDef>On IReV / missing / replaced / failed / unchecked</th>
       <td mat-cell *matCellDef="let r" class="small">
         {{ r.on_irev + r.downloaded + r.replaced }} / <span [class.warn]="r.not_on_irev">{{ r.not_on_irev }}</span> /
@@ -76,6 +89,8 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
           @if (u.replaced_count) { · <span class="bad">replaced {{ u.replaced_count }}×</span> }</mat-card-subtitle></mat-card-header>
       <mat-card-content>
         @if (u.storage_path) { <button mat-flat-button (click)="openSheet(u.pu_code)">Open sheet</button> }
+        @else if (u.sheet_url) { <button mat-flat-button (click)="openSheet(u.pu_code)"><mat-icon>link</mat-icon> Open sheet from INEC</button>
+          <span class="small sub"> · link saved, no copy kept</span> }
         @if (u.last_error) { <p class="bad">Last error: {{ u.last_error }}</p> }
         <h3>Check history</h3>
         @for (l of unitLog(); track l.id) { <div class="small">{{ l.at | ago }} · {{ label(l.status) }}</div> }
@@ -86,7 +101,7 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
   <h2>Jobs</h2>
   @for (j of jobs(); track j.id) {
     <div class="job">
-      <div><b>{{ label(j.job_type) }}</b> · {{ j.area_level }} {{ j.area_code }} · {{ label(j.status) }}
+      <div><b>{{ label(j.job_type) }}</b>@if (j.keep === 'link' && j.job_type !== 'ocr') { <span class="tag">links only</span> } · {{ j.area_level }} {{ j.area_code }} · {{ label(j.status) }}
         @if (j.auto_recheck) { · every {{ j.interval_min }} min, next {{ j.next_run_at | ago }} } · started {{ j.created_at | ago }}</div>
       <div class="small">{{ progressText(j) }}
         @if (j.counts['failed']) { · <span class="bad">{{ j.counts['failed'] }} could not be downloaded</span> }</div>
@@ -105,7 +120,11 @@ interface Job { id: string; job_type: string; area_level: string; area_code: str
     table { width: 100%; } td a { cursor: pointer; color: var(--mat-sys-primary); } .code { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-left: 6px; }
     .small { font-size: 12px; } .warn { color: #c25700; } .bad { color: #b3261e; font-weight: 600; } .acts { display: flex; gap: 4px; align-items: center; }
     .job { border-bottom: 1px solid var(--mat-sys-outline-variant); padding: 8px 0; } .unit { margin: 16px 0; } h2 { font: var(--mat-sys-title-medium); margin-top: 24px; }
-    mat-progress-bar { width: 140px; display: inline-block; margin-right: 8px; }`,
+    mat-progress-bar { width: 140px; display: inline-block; margin-right: 8px; }
+    .keep { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--r-line); border-radius: 10px; background: #fff; }
+    .kl { font-weight: 600; font-size: 13px; } .kh { font-size: 12.5px; color: var(--r-muted); flex: 1; min-width: 240px; }
+    .keep mat-icon { font-size: 18px; width: 18px; height: 18px; vertical-align: -4px; margin-right: 4px; }
+    .sub { color: var(--r-muted); } td .small { white-space: nowrap; } .tag { margin-left: 6px; font-size: 11px; font-weight: 700; background: #e3ecf7; color: #1f4e8c; border-radius: 8px; padding: 1px 7px; }`,
 })
 export class IrevPage implements OnDestroy {
   private api = inject(Api);
@@ -136,6 +155,11 @@ export class IrevPage implements OnDestroy {
   ngOnDestroy() { this.stopLive(); }
 
   setMode(m: 'baseline' | 'live') { this.mode.set(m); void this.load(); }
+  /** Download sheets (default) or keep only INEC's links; remembered on this computer */
+  keep = signal<'file' | 'link'>(readKeep());
+  setKeep(k: 'file' | 'link') { this.keep.set(k); try { localStorage.setItem('rumfa.irev.keep', k); } catch { /* private mode */ } }
+  /** Units we can show a sheet for: downloaded, replaced (re-downloaded), or a saved INEC link */
+  have(r: AreaRow) { return r.downloaded + r.replaced + (r.linked ?? 0); }
   go(code: string) { this.parent.set(code); this.unit.set(null); void this.loadRows(); }
 
   async load() { await Promise.all([this.loadRows(), this.loadJobs()]); }
@@ -157,8 +181,9 @@ export class IrevPage implements OnDestroy {
 
   async fetch(area: string, type: 'baseline' | 'live' | 'recheck' | 'ocr', auto = false) {
     const level = area === 'NG' ? 'national' : ({ 2: 'state', 5: 'lga', 8: 'ward' } as Record<number, string>)[area.length];
-    const ok = await this.ui.run(() => this.api.post('/irev/jobs', { electionId: this.election(), jobType: type, areaLevel: level, areaCode: area, autoRecheck: auto, intervalMin: 10 }));
-    if (ok) this.ui.toast(`${label(type)} job queued for ${this.names()[area] ?? area}`);
+    const keep = type === 'ocr' ? 'file' : this.keep();
+    const ok = await this.ui.run(() => this.api.post('/irev/jobs', { electionId: this.election(), jobType: type, areaLevel: level, areaCode: area, autoRecheck: auto, intervalMin: 10, keep }));
+    if (ok) this.ui.toast(`${label(type)} job queued for ${this.names()[area] ?? area}${keep === 'link' ? ' (links only)' : ''}`);
     await this.loadJobs();
   }
 

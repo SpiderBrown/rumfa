@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MessageAlerts } from './message-alerts';
 import { AppCallsService } from './app-calls.service';
 import { ShiftsController, TopupsController, VoiceController } from './admin.controller';
 import { CallbacksController } from './callbacks.controller';
@@ -12,6 +13,7 @@ import { LiveCountsController } from './live-counts.controller';
 import { CheckinsController } from './checkins.controller';
 import { UnitFiguresController } from './unit-figures.controller';
 import { MapController } from './map.controller';
+import { TeamController } from './team.controller';
 import { MediaController } from './media.controller';
 import { MessagesController } from './messages.controller';
 import { PeopleController } from './people.controller';
@@ -23,8 +25,8 @@ import { WebhooksController } from '../webhooks/webhooks.controller';
   controllers: [
     ContextController, PeopleController, CasesController, FieldController, ResultsController, CallbacksController,
     ContactsController, MessagesController, ShiftsController, TopupsController, VoiceController, MediaController,
-    LiveViewController, CallsController, SettingsController, MapController, LiveCountsController, CheckinsController, UnitFiguresController, WebhooksController,
+    LiveViewController, CallsController, SettingsController, MapController, TeamController, LiveCountsController, CheckinsController, UnitFiguresController, WebhooksController,
   ],
-  providers: [AppCallsService],
+  providers: [AppCallsService, MessageAlerts],
 })
 export class DomainModule {}

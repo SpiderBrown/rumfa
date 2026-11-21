@@ -47,8 +47,17 @@ export class Calls {
     return this.client;
   }
 
-  /** Call a volunteer or authority contact, optionally from a case. Volunteers can also get a free app call. */
-  async call(target: 'volunteer' | 'contact', id: string, label: string, caseId?: string, reason?: string) {
+  private dialled = false;
+  /**
+   * Call a volunteer or authority contact, optionally from a case. Volunteers can also get a free app call.
+   * Resolves true when a call was actually placed (or the number handed to the phone), false when cancelled or failed.
+   */
+  async call(target: 'volunteer' | 'contact', id: string, label: string, caseId?: string, reason?: string): Promise<boolean> {
+    this.dialled = false;
+    await this.place(target, id, label, caseId, reason);
+    return !!this.active() || this.dialled;
+  }
+  private async place(target: 'volunteer' | 'contact', id: string, label: string, caseId?: string, reason?: string) {
     if (this.active()) { this.ui.error('You are already on a call. Hang up first.'); return; }
     if (target === 'volunteer' && this.api.callOptions().inapp) {
       const how = await this.ui.choose(`Call ${label}`, '', [
@@ -65,12 +74,24 @@ export class Calls {
         client.call(phone);
         this.active.set({ callId, label, via: 'browser', phase: 'connected' });
       } else if (target === 'volunteer') {
-        const { callId } = await this.api.post<{ callId: string }>('/calls/bridge', { volunteerId: id, caseId, reason });
-        this.active.set({ callId, label, via: 'phone', phase: 'connected' });
-        this.ui.toast('Your phone will ring first, then we connect ' + label);
+        try {
+          const { callId } = await this.api.post<{ callId: string }>('/calls/bridge', { volunteerId: id, caseId, reason });
+          this.active.set({ callId, label, via: 'phone', phase: 'connected' });
+          this.ui.toast('Your phone will ring first, then we connect ' + label);
+        } catch (e) {
+          // Rumfa couldn't place the call (phone provider not reachable or not set up): offer the person's number instead
+          const { phone } = await this.api.post<{ callId: string; phone: string }>('/calls/prepare', { target, id, caseId, reason: (reason ?? 'call') + ' (dialled directly)' });
+          const go = await this.ui.choose(`Call ${label}`, `Rumfa couldn't connect the call (${e instanceof Error ? e.message : 'provider error'}). Call them from your own phone instead:`, [
+            { label: `Dial ${phone}`, hint: 'Opens your phone or calling app with the number', value: 'dial' as const },
+            { label: 'Copy the number', hint: phone, value: 'copy' as const },
+          ]);
+          if (go === 'dial') { this.dialled = true; window.location.href = `tel:${phone}`; }
+          if (go === 'copy') { this.dialled = true; await navigator.clipboard?.writeText(phone).catch(() => undefined); this.ui.toast('Number copied'); }
+        }
       } else {
         // Authority contacts: register the call, then dial from the operator's phone
         const { phone } = await this.api.post<{ callId: string; phone: string }>('/calls/prepare', { target, id, caseId, reason });
+        this.dialled = true;
         window.location.href = `tel:${phone}`;
       }
     });

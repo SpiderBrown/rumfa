@@ -9,6 +9,7 @@ import { ProvidersService } from '../common/providers.service';
 import { CALL_MODES, type CallMode, requireCallMode } from '../common/tenant-settings';
 import { AppCallsService } from './app-calls.service';
 import { describeChannels } from './channel-labels';
+import { MessageAlerts } from './message-alerts';
 
 class MessageDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(4000) body?: string;
@@ -26,7 +27,8 @@ class ChannelCallDto {
 @ApiBearerAuth()
 @Controller('channels')
 export class MessagesController {
-  constructor(private readonly db: Db, private readonly providers: ProvidersService, private readonly appCalls: AppCallsService) {}
+  constructor(private readonly db: Db, private readonly providers: ProvidersService, private readonly appCalls: AppCallsService,
+              private readonly alerts: MessageAlerts) {}
 
   /** Channels the caller belongs to (the database decides: case, area and direct channels). */
   @Get()
@@ -61,7 +63,28 @@ export class MessagesController {
       const messages = await selectFn(q, 'channel_messages', { p_channel: id, p_limit: 200 });
       await q(`insert into public.channel_reads (channel_id, volunteer_id, last_read_at) values ($1, $2, now())
                on conflict (channel_id, volunteer_id) do update set last_read_at = now()`, [id, u.mid]);
-      return { channel: { ...channel, ...(await describeChannels(this.db, u.mid, [id])).get(id) }, messages: messages.reverse() };
+      // A direct chat is the whole story with that person: their call requests and every call with them
+      // (by anyone the caller may see: Room staff see all of the client's calls)
+      let person = null, calls: any[] = [], requests: any[] = [];
+      if (channel.kind === 'direct') {
+        const other = channel.member_a === u.mid ? channel.member_b : channel.member_a;
+        // (the caller is already allowed into this chat; device times aren't readable as the user)
+        [person] = await this.db.system(
+          `select v.id, v.full_name, v.role, v.level, v.area_code, v.phone,
+                  (select max(d.last_seen_at) from public.auth_devices d where v.user_id is not null and d.identity_id = v.user_id) as last_seen
+             from public.volunteers v where v.id = $1 and v.tenant_id = $2`, [other, u.tid]);
+        calls = await q(
+          `select c.id, c.caller_id, c.callee_id, c.route, c.status, c.duration_s, c.reason, c.case_id, c.callback_id, c.started_at, c.ended_at,
+                  a.full_name as caller_name, b.full_name as callee_name
+             from public.calls c left join public.volunteers a on a.id = c.caller_id left join public.volunteers b on b.id = c.callee_id
+            where c.tenant_id = $1 and (c.caller_id = $2 or c.callee_id = $2) order by c.started_at desc limit 50`, [u.tid, other]);
+        requests = await q(
+          `select r.id, r.reason, r.status, r.channel, r.attempts, r.escalation_level, r.due_at, r.outcome, r.case_id, r.created_at, r.updated_at,
+                  r.voice_note_path is not null as has_voice_note, h.full_name as assigned_name
+             from public.callback_requests r left join public.volunteers h on h.id = r.assigned_to
+            where r.tenant_id = $1 and r.requester_id = $2 order by r.created_at desc limit 20`, [u.tid, other]);
+      }
+      return { channel: { ...channel, ...(await describeChannels(this.db, u.mid, [id])).get(id) }, messages: messages.reverse(), person, calls, requests };
     });
   }
 
@@ -121,10 +144,17 @@ export class MessagesController {
   async send(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: MessageDto) {
     if (!d.body && !d.mediaPath) throw new BadRequestException('Write a message or attach a file');
     if (d.mediaPath && !d.mediaPath.startsWith(`${u.tid}/`)) throw new BadRequestException('Unknown file');
-    const [row] = await this.db.asUser(u, (q) => q(
+    const [fresh] = await this.db.asUser(u, (q) => q(
       `insert into public.messages (tenant_id, channel_id, sender_id, kind, body, media_path, client_id)
-       values ($1, $2, $3, $4, $5, $6, $7) on conflict (client_id) do update set client_id = excluded.client_id returning *`,
+       values ($1, $2, $3, $4, $5, $6, $7) on conflict (client_id) do nothing returning *`,
       [u.tid, id, u.mid, d.kind ?? (d.mediaPath ? 'photo' : 'text'), d.body ?? null, d.mediaPath ?? null, d.clientId]));
-    return row;
+    // Sent before (the app resends when it isn't sure it got through): return what was stored, no second alert
+    if (!fresh) {
+      const [old] = await this.db.asUser(u, (q) => q(`select * from public.messages where client_id = $1 and sender_id = $2`, [d.clientId, u.mid]));
+      if (!old) throw new BadRequestException('This message id is already used');
+      return old;
+    }
+    await this.alerts.sent(u, id, fresh).catch(() => undefined);
+    return fresh;
   }
 }

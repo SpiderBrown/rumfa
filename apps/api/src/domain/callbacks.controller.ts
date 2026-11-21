@@ -70,6 +70,12 @@ export class CallbacksController {
     return { caseId: await this.db.asUser(u, (q) => callFn(q, 'convert_callback_to_case', { p_id: id, p_category: d.category, p_note: d.note })) };
   }
 
+  /** Marks a request as being called (one more try), whatever kind of call the caller then places. */
+  @Post(':id/start') @HttpCode(204) @Roles('coordinator', ...ROOM)
+  async start(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    await this.db.asUser(u, (q) => callFn(q, 'start_callback', { p_id: id }));
+  }
+
   /**
    * Bridged GSM call: our number rings the coordinator first, then connects the agent. If the provider
    * cannot place the call, the request goes back to waiting and the number is returned for a direct call.

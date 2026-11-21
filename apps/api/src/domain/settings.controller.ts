@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Patch, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString, Matches, ValidateIf } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
@@ -7,6 +7,7 @@ import { tenantAuthSettings } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { CALL_MODES, callSettings, checkinSettings, ownParty, tenantCallSettings, tenantSettings } from '../common/tenant-settings';
 import { elections } from '../common/fn';
+import { DEFAULT_RULES, ROUTABLE, rulesChanges, rulesOf, rulesProblems } from '../common/rules';
 
 class CallSettingsDto {
   @ApiPropertyOptional({ description: 'Phone call on the caller\'s own airtime' }) @IsOptional() @IsBoolean() phone?: boolean;
@@ -39,7 +40,43 @@ export class SettingsController {
     const { live } = await this.db.asUser(u, (q) => elections(q, u.tid));
     const parties = live ? (await this.db.system(`select party from public.election_parties where election_id = $1 order by ballot_order`, [live])).map((p) => p.party) : [];
     return { name: t.name, brand: t.settings?.brand ?? t.name, calls: callSettings(t.settings), auth: tenantAuthSettings(t.settings),
-      checkin: checkinSettings(t.settings), party: ownParty(t.settings), parties };
+      checkin: checkinSettings(t.settings), party: ownParty(t.settings), parties,
+      rules: rulesOf(t.settings), defaults: DEFAULT_RULES, hierarchy: await this.hierarchy(u.tid),
+      categories: ROUTABLE.map((c) => ({ code: c.code, label: c.label, severity: c.severity, queue: c.queue })) };
+  }
+
+  /** The seat's top level and room: where "move up" ends (cases never go past the seat) */
+  private async hierarchy(tid: string) {
+    const [h] = await this.db.system(
+      `select app.seat_level($1) as level, t.seat,
+              (select q.name from public.queues q where q.id = app.top_queue($1, coalesce(t.seat_area, (select c.area_code from public.tenant_coverage c where c.tenant_id = $1 limit 1), ''))) as top_room
+         from public.tenants t where t.id = $1`, [tid]);
+    return { level: h?.level ?? 'state', seat: h?.seat ?? null, topRoom: h?.top_room ?? null };
+  }
+
+  @Put('rules')
+  @ApiOperation({ summary: 'Replace the operating rules: case timings, routing, field team, callbacks, alerts, results' })
+  async rules(@CurrentUser() u: AuthUser, @Body() body: any) {
+    const problems = rulesProblems(body);
+    if (problems.length) throw new BadRequestException(problems.join('. '));
+    const before = rulesOf(await tenantSettings(this.db, u.tid));
+    const next = rulesOf({ rules: body });     // keeps only known fields
+    const changes = rulesChanges(before, next);
+    if (!changes.length) return next;
+    await this.save(u.tid, 'rules', next);
+    await this.db.system(
+      `insert into public.audit_log (tenant_id, actor_id, action, entity, entity_id, data) values ($1, $2, 'rules_changed', 'tenant', $3, $4::jsonb)`,
+      [u.tid, u.mid, u.tid, JSON.stringify({ changes })]);
+    return next;
+  }
+
+  @Get('rules/history')
+  @ApiOperation({ summary: 'Recent changes to the operating rules, newest first' })
+  history(@CurrentUser() u: AuthUser) {
+    return this.db.system(
+      `select a.at, v.full_name as by, a.data->'changes' as changes
+         from public.audit_log a left join public.volunteers v on v.id = a.actor_id
+        where a.tenant_id = $1 and a.action = 'rules_changed' order by a.at desc limit 20`, [u.tid]);
   }
 
   @Patch('calls')

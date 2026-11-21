@@ -149,6 +149,26 @@ export class Calls {
     } catch (e) { this.reset(); this.ui.error(e); }
   }
 
+  // ---- Fallback when live updates are slow or down: look for calls ringing for me, and follow my own call ----
+  private watching = false;
+  private ticks = 0;
+  /** During a call, every 3 s: the call I'm in (to hear it was answered or ended). Idle: see watchTick. */
+  watch() {
+    if (this.watching) return;
+    this.watching = true;
+    setInterval(() => void this.watchTick(), 3000);
+  }
+  private async watchTick() {
+    this.ticks++;
+    const a = this.active() as any;
+    // Idle: rings come over the live connection. Only while it's down, look every 15 s; otherwise a safety check every 5 min.
+    if (!a) { if (this.ticks % (this.api.live() ? 100 : 5) === 0) await this.checkIncoming().catch(() => undefined); return; }
+    const isApp = a.via === 'app' || a.kind === 'app';
+    if (!isApp || !a.callId || a.phase === 'incoming' || (a.phase === 'connected' && this.ticks % 3)) return;
+    const c = await this.api.get<{ status: string }>(`/calls/app/${a.callId}`).catch(() => null);
+    if (c) this.onCallChange({ id: a.callId, op: 'update', status: c.status });
+  }
+
   /** Live updates about app calls I am in. */
   onCallChange(c: { id?: string; op: string; status?: string }) {
     if (!c.id) return;

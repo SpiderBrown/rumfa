@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ArrayMinSize, IsArray, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
@@ -20,6 +20,12 @@ class AppCallDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() caseId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) reason?: string;
 }
+class GroupDto {
+  @ApiProperty({ description: 'Area code: everyone inside it' }) @IsString() @MaxLength(20) area: string;
+  @ApiProperty({ enum: ['coordinator', 'agent', 'volunteer'], isArray: true }) @IsArray() @ArrayMinSize(1) @IsIn(['coordinator', 'agent', 'volunteer'], { each: true }) roles: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(120) title?: string;
+}
+class PhoneDto { @ApiProperty() @IsArray() @ArrayMinSize(1) @IsUUID('all', { each: true }) people: string[]; }
 class EndDto { @ApiPropertyOptional({ enum: ['hangup', 'declined', 'timeout'] }) @IsOptional() @IsIn(['hangup', 'declined', 'timeout']) reason?: 'hangup' | 'declined' | 'timeout'; }
 class BridgeDto {
   @ApiProperty() @IsUUID() volunteerId: string;
@@ -108,6 +114,25 @@ export class CallsController {
     if (!v) throw new NotFoundException('Person not found');
     return this.appCalls.start(u, v.id, { caseId: d.caseId, reason: d.reason });
   }
+
+  // ---- Group calls (My field team) ---------------------------------------------------------------------
+  @Post('group/preview') @HttpCode(200)
+  @ApiOperation({ summary: 'Who a group call to these roles in this area would ring' })
+  groupPreview(@CurrentUser() u: AuthUser, @Body() d: GroupDto) { return this.appCalls.groupAudience(u, d.area, d.roles); }
+
+  @Post('group') @HttpCode(200)
+  @ApiOperation({ summary: 'Ring everyone of these roles in the area into one app call' })
+  startGroup(@CurrentUser() u: AuthUser, @Body() d: GroupDto) { return this.appCalls.startGroup(u, d.area, d.roles, d.title?.trim() || 'Group call'); }
+
+  @Get('group/:id')
+  group(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.appCalls.group(u, id); }
+
+  @Post('group/:id/phone') @HttpCode(200)
+  @ApiOperation({ summary: "Phone people who didn't answer in the app into the call (costs minutes; the caller confirms first)" })
+  phoneGroup(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: PhoneDto) { return this.appCalls.phoneGroup(u, id, d.people); }
+
+  @Post('group/:id/end') @HttpCode(200)
+  endGroup(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.appCalls.endGroup(u, id); }
 
   @Get('app/incoming')
   incoming(@CurrentUser() u: AuthUser) { return this.appCalls.incoming(u); }

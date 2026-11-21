@@ -54,6 +54,10 @@ export class ProvidersService {
   }
 
   livekitUrl() { return this.lk.url; }
+  /** The SIP address Africa's Talking dials to put a phone into a LiveKit room ('' when not set up) */
+  livekitSipDial(room: string) { return this.lk.sipDial ? this.lk.sipDial.replace('{room}', room) : ''; }
+  /** Calls through Africa's Talking can be placed (live account with a voice number) */
+  atVoiceReady(): boolean { try { this.voiceReady(); return true; } catch { return false; } }
 
   /** LiveKit is needed for live video and app calls. */
   livekitReady() {

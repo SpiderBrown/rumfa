@@ -16,7 +16,7 @@ export function voiceConfigured(): boolean {
   return config.at.username !== 'sandbox' && !!config.at.apiKey && !!config.at.voiceNumber;
 }
 
-async function makeCall(to: string, clientRequestId: string): Promise<string> {
+export async function makeCall(to: string, clientRequestId: string): Promise<string> {
   const res = await fetch('https://voice.africastalking.com/call', {
     method: 'POST',
     headers: { apiKey: config.at.apiKey, Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },

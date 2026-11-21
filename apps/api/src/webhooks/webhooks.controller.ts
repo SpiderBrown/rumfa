@@ -10,6 +10,7 @@ import type { AppConfig } from '../config/configuration';
 import { Db } from '../database/db.service';
 import { ProvidersService } from '../common/providers.service';
 import { StorageService } from '../common/storage.service';
+import { groupRoom } from '../domain/app-calls.service';
 import { decodeSms, normaliseNgPhone, SmsDecodeError } from '../shared';
 
 const xml = (body: string) => `<?xml version="1.0" encoding="UTF-8"?>\n<Response>${body}</Response>`;
@@ -80,7 +81,13 @@ export class WebhooksController {
     // The agent code decides the client: it is unique across every client the phone works for
     const [v] = await this.db.system(
       `select id, tenant_id from public.volunteers where phone = $1 and status = 'active' and agent_code = $2`, [from, msg.agentCode]);
-    if (!v) return finish({ decoded: msg, error: 'Unknown sender or agent code' });
+    if (!v) {
+      // A real agent code from another line (dual-SIM phones are common): tell them, so the result isn't silently lost.
+      // Nothing is accepted from an unregistered number.
+      const [owner] = await this.db.system(`select tenant_id from public.volunteers where agent_code = $1 and status = 'active' limit 1`, [msg.agentCode]);
+      return finish({ decoded: msg, error: 'Unknown sender or agent code', tenant_id: owner?.tenant_id },
+        owner ? 'Not accepted: this phone number is not the one registered for your agent code. Send from your registered line, or call your coordinator.' : undefined);
+    }
     const base = { decoded: msg, tenant_id: v.tenant_id, volunteer_id: v.id };
     try {
       if (msg.kind === 'result') {
@@ -128,6 +135,11 @@ export class WebhooksController {
       const duration = Number(f.durationInSeconds ?? 0) || 0;
       const answered = duration > 0 && (f.status ?? '').toLowerCase() === 'success';
       const status = answered ? 'completed' : (f.hangupCause ?? '').toLowerCase().includes('busy') ? 'busy' : 'no_answer';
+      // A voice message: heard, or try again later
+      const [ann] = await this.db.system(
+        `update public.voice_announcement_calls set status = $2, heard_s = case when $2 = 'heard' then $3 else heard_s end, updated_at = now()
+          where provider_session_id = $1 returning id`, [sessionId, answered ? 'heard' : status === 'busy' ? 'busy' : 'no_answer', duration]);
+      if (ann) return xml('');
       const [call] = await this.db.system(`select id, contact_id from public.calls where provider_session_id = $1`, [sessionId]);
       if (call) {
         await this.db.system(`update public.calls set status = $2, duration_s = $3, recording_url = $4, ended_at = now() where id = $1`,
@@ -141,12 +153,41 @@ export class WebhooksController {
       return xml('');
     }
 
+    // 0. A voice message: they answered, so play it and hang up
+    let [ann] = await this.db.system(
+      `select c.id, a.audio_path, a.status, v.full_name as sender, coalesce(t.settings->>'brand', t.name) as brand
+         from public.voice_announcement_calls c join public.voice_announcements a on a.id = c.announcement_id
+         join public.volunteers v on v.id = a.created_by join public.tenants t on t.id = a.tenant_id where c.provider_session_id = $1`, [sessionId]);
+    if (!ann && /^ann-[0-9a-f-]{36}$/.test(f.clientRequestId ?? '')) {
+      [ann] = await this.db.system(
+        `select c.id, a.audio_path, a.status, v.full_name as sender, coalesce(t.settings->>'brand', t.name) as brand
+           from public.voice_announcement_calls c join public.voice_announcements a on a.id = c.announcement_id
+           join public.volunteers v on v.id = a.created_by join public.tenants t on t.id = a.tenant_id where c.id = $1`, [f.clientRequestId.slice(4)]);
+      if (ann) await this.db.system(`update public.voice_announcement_calls set provider_session_id = $2 where id = $1 and provider_session_id is null`, [ann.id, sessionId]);
+    }
+    if (ann) {
+      if (ann.status === 'cancelled') return xml('<Reject/>');
+      const url = await this.storage.viewUrl('voice-notes', ann.audio_path, 600);
+      return xml(`<Say>A message from ${esc(ann.sender)}, ${esc(ann.brand)}.</Say><Play url="${esc(url)}"/><Say>Thank you.</Say>`);
+    }
+
     // 1. Bridged call: first person answered, now ring the second
-    let [call] = await this.db.system(`select id, to_phone, route from public.calls where provider_session_id = $1`, [sessionId]);
+    let [call] = await this.db.system(`select id, to_phone, route, group_id from public.calls where provider_session_id = $1`, [sessionId]);
     if (!call && /^[0-9a-f-]{36}$/.test(f.clientRequestId ?? '')) {
       [call] = await this.db.system(
-        `update public.calls set provider_session_id = $2 where id = $1 and provider_session_id is null returning id, to_phone, route`,
+        `update public.calls set provider_session_id = $2 where id = $1 and provider_session_id is null returning id, to_phone, route, group_id`,
         [f.clientRequestId, sessionId]);
+    }
+    // A phone into a group call: they answered, so join them to the group's room over SIP
+    if (call?.route === 'group_phone') {
+      const [g] = await this.db.system(`select status from public.group_calls where id = $1`, [call.group_id]);
+      const sip = this.providers.livekitSipDial(groupRoom(call.group_id));
+      if (g?.status !== 'active' || !sip) {
+        await this.db.system(`update public.calls set status = 'no_answer', ended_at = now() where id = $1`, [call.id]);
+        return xml('<Say>This group call has ended. Thank you.</Say>');
+      }
+      await this.db.system(`update public.calls set status = 'answered', started_at = now() where id = $1`, [call.id]);
+      return xml(`<Say>Joining you to the group call now.</Say><Dial phoneNumbers="${esc(sip)}" callerId="${esc(at.voiceNumber)}"/>`);
     }
     if (call?.route === 'bridged') {
       await this.db.system(`update public.calls set status = 'answered' where id = $1`, [call.id]);

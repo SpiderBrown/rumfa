@@ -16,14 +16,21 @@ export interface Job {
   keep?: 'file' | 'link';
 }
 
-/** Claim one due job (queued, or a live job whose next recheck is due). */
+/**
+ * Claim one due job: one someone started (queued), or an automatic recheck that is due. Automatic rechecks (the
+ * watcher, "keep checking") run only around election day: from the election's date to two days after (Lagos time),
+ * when INEC is uploading. On other days they wait, so IReV is never polled for nothing. Jobs someone starts by hand
+ * run whenever they're started.
+ */
 export async function claimJob(): Promise<Job | null> {
   const job = await one<Job>(
     `update public.irev_fetch_jobs j
         set status = 'running', started_at = case when j.status = 'queued' then now() else j.started_at end, next_run_at = null
-      where j.id = (select id from public.irev_fetch_jobs
-                     where status = 'queued' or (status = 'running' and auto_recheck and next_run_at <= now())
-                     order by created_at limit 1 for update skip locked)
+      where j.id = (select x.id from public.irev_fetch_jobs x join public.elections e on e.id = x.election_id
+                     where ((x.status = 'queued' and not x.auto_recheck)
+                            or (x.auto_recheck and (x.status = 'queued' or (x.status = 'running' and x.next_run_at <= now()))
+                                and (now() at time zone 'Africa/Lagos')::date between e.election_date and e.election_date + 2))
+                     order by x.created_at limit 1 for update of x skip locked)
       returning j.*`);
   return job ?? null;
 }
@@ -127,7 +134,8 @@ const saveCounts = (id: string, counts: Record<string, number>) =>
 
 async function finish(job: Job, counts: Record<string, number>) {
   if (job.auto_recheck && job.job_type === 'live') {
-    await q(`update public.irev_fetch_jobs set counts = $2, next_run_at = now() + make_interval(mins => $3) where id = $1`,
+    // Never sooner than 10 minutes after a pass finishes
+    await q(`update public.irev_fetch_jobs set counts = $2, next_run_at = now() + make_interval(mins => greatest($3, 10)) where id = $1`,
       [job.id, json(counts), job.interval_min]);
     await q(`select public.svc_flag_missing_uploads($1, 4)`, [job.election_id]);
   } else {

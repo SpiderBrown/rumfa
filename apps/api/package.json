@@ -18,6 +18,7 @@
     "import:inec-contacts": "node --env-file-if-exists=.env dist/scripts/import-inec-contacts",
     "import:liaison": "node --env-file-if-exists=.env dist/scripts/import-liaison-contacts",
     "import:people": "node --env-file-if-exists=.env dist/scripts/import-people",
+    "irev:watch": "node --env-file-if-exists=.env dist/scripts/irev-watch",
     "build:sample": "node --env-file-if-exists=.env dist/scripts/build-sample",
     "import:boundaries": "node --env-file-if-exists=.env dist/scripts/import-boundaries",
     "platform:owner": "node --env-file-if-exists=.env dist/scripts/platform-owner"

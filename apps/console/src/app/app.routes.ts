@@ -18,6 +18,8 @@ export const routes: Routes = [
       { path: 'contacts', loadComponent: () => import('./pages/contacts').then((m) => m.ContactsPage) },
       { path: 'places', loadComponent: () => import('./pages/places').then((m) => m.PlacesPage) },
       { path: 'elections', loadComponent: () => import('./pages/elections').then((m) => m.ElectionsPage) },
+      { path: 'jobs', loadComponent: () => import('./pages/jobs').then((m) => m.JobsPage) },
+      { path: 'irev', loadComponent: () => import('./pages/irev').then((m) => m.IrevPage) },
       { path: 'staff', loadComponent: () => import('./pages/staff').then((m) => m.StaffPage) },
       { path: 'activity', loadComponent: () => import('./pages/activity').then((m) => m.ActivityPage) },
     ],

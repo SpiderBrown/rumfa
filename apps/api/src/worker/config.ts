@@ -5,7 +5,7 @@ const num = (k: string, d: number): number => (process.env[k] ? Number(process.e
 export const workerConfig = {
   irev: {
     baseUrl: opt('IREV_BASE_URL', 'https://dolphin-app-sleqh.ondigitalocean.app/api/v1'),
-    requestsPerSecond: num('IREV_RPS', 1.5),
+    requestsPerSecond: num('IREV_RPS', 1),
     downloadsPerSecond: num('IREV_DOWNLOAD_RPS', 5),
     userAgent: opt('IREV_USER_AGENT', 'Rumfa-situation-room/1.0'),
     maxImageWidth: num('IREV_MAX_WIDTH', 1024),

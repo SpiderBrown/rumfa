@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { liveBus } from './live-bus';
 import { ConnectedSocket, MessageBody, OnGatewayConnection, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Client, type ClientConfig } from 'pg';
 import type { Server, Socket } from 'socket.io';
@@ -109,6 +110,9 @@ export class LiveGateway implements OnGatewayConnection, OnApplicationBootstrap,
       case 'calls':
         for (const m of [e.caller_id, e.callee_id]) if (m) to.add(rooms.member(m));
         break;
+      case 'field_tasks':
+        if (e.assignee_id) to.add(rooms.member(e.assignee_id));
+        break;
       case 'irev_fetch_jobs': case 'verifications': case 'staff_status':
         to.add(rooms.staff(tid));
         break;
@@ -119,24 +123,33 @@ export class LiveGateway implements OnGatewayConnection, OnApplicationBootstrap,
 
   // ---- Postgres LISTEN ------------------------------------------------------------------------------
   async onApplicationBootstrap() {
+    // Straight from the API (app calls): no database connection involved
+    liveBus.on('change', (e) => { try { this.route(e); } catch (err) { this.log.error(`Bad change: ${(err as Error).message}`); } });
     if (process.env.LIVE_UPDATES === 'off') return;
     await this.listen();
   }
 
   async onModuleDestroy() {
     this.stopped = true;
+    if (this.beat) clearInterval(this.beat);
     await this.pg?.end().catch(() => undefined);
   }
+
+  private beat: ReturnType<typeof setInterval> | null = null;
 
   private async listen(attempt = 0): Promise<void> {
     if (this.stopped) return;
     const { db } = configuration();
-    const cfg: ClientConfig = db.url
-      ? { connectionString: db.url, ssl: db.ssl ? { rejectUnauthorized: false } : false }
+    // LISTEN needs a session connection (not the transaction pooler)
+    const cfg: ClientConfig = db.sessionUrl
+      ? { connectionString: db.sessionUrl, ssl: db.ssl ? { rejectUnauthorized: false } : false }
       : { host: db.host, port: db.port, user: db.username, password: db.password, database: db.database, ssl: db.ssl ? { rejectUnauthorized: false } : false };
-    const client = new Client(cfg);
+    const client = new Client({ ...cfg, keepAlive: true });
+    let gone = false;
     const retry = () => {
-      if (this.stopped) return;
+      if (this.stopped || gone) return;
+      gone = true;
+      if (this.beat) { clearInterval(this.beat); this.beat = null; }
       this.pg = null;
       const wait = Math.min(30_000, 1000 * 2 ** attempt);
       this.log.warn(`Lost the change feed; reconnecting in ${wait / 1000}s`);
@@ -149,9 +162,17 @@ export class LiveGateway implements OnGatewayConnection, OnApplicationBootstrap,
         try { this.route(JSON.parse(n.payload)); } catch (e) { this.log.error(`Bad change event: ${(e as Error).message}`); }
       });
       client.on('error', () => { client.end().catch(() => undefined); retry(); });
+      client.on('end', () => retry());
       await client.query('listen rumfa_changes');
       this.pg = client;
       attempt = 0;
+      this.log.log('Change feed connected');
+      // A connection can die quietly (network drop, the pooler restarting): check it every 30 s, reconnect if it's gone
+      this.beat = setInterval(() => {
+        const t = setTimeout(() => { client.end().catch(() => undefined); retry(); }, 10_000);
+        client.query('select 1').then(() => clearTimeout(t), () => { clearTimeout(t); client.end().catch(() => undefined); retry(); });
+      }, 30_000);
+      this.beat.unref();
     } catch (e) {
       this.log.error(`Change feed: ${(e as Error).message}`);
       await client.end().catch(() => undefined);

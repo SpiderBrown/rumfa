@@ -32,6 +32,9 @@ export default function configuration() {
     db: {
       /** Full connection string (Supabase Session pooler). Takes precedence over the separate settings. */
       url: process.env.DATABASE_URL?.trim() || undefined,
+      /** A session-mode connection for what transaction pooling can't do: the live change feed (LISTEN) and the worker
+       *  (advisory locks). Set it when DATABASE_URL is Supabase's transaction pooler (port 6543); defaults to DATABASE_URL. */
+      sessionUrl: process.env.DATABASE_SESSION_URL?.trim() || process.env.DATABASE_URL?.trim() || undefined,
       host: process.env.DB_HOST ?? 'localhost',
       port: int(process.env.DB_PORT, 5432),
       username: process.env.DB_USER ?? 'postgres',
@@ -78,6 +81,10 @@ export default function configuration() {
       url: process.env.LIVEKIT_URL ?? '',
       apiKey: process.env.LIVEKIT_API_KEY ?? '',
       apiSecret: process.env.LIVEKIT_API_SECRET ?? '',
+      /** Where Africa's Talking dials to join a phone into a group call room, with {room} for the room name,
+       *  e.g. sip:{room}@xxxx.sip.livekit.cloud (LiveKit SIP inbound trunk with a dispatch rule by called number).
+       *  Empty: group calls are app-only. */
+      sipDial: process.env.LIVEKIT_SIP_DIAL ?? '',
     },
     storage: {
       /** supabase: private Supabase Storage buckets via the service key. local: files on disk (development, tests). */

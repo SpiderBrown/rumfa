@@ -16,7 +16,7 @@ import { Clock } from '../core/clock';
   selector: 'page-count',
   imports: [FormsModule, IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonItem, IonList, IonTitle, IonToolbar],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
+  <ion-header><ion-toolbar><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
     <ion-title>{{ t('Live count') }}</ion-title>
     <span slot="end" class="link" [class]="lc.link()">{{ linkText() }}</span>
   </ion-toolbar></ion-header>
@@ -92,7 +92,7 @@ import { Clock } from '../core/clock';
     .party.own .ours { grid-column: 2; grid-row: 2; font-size: 13px; opacity: .9; align-self: start; }
     .party.own .pc { grid-column: 3; grid-row: 1 / 3; font-size: 44px; }
     .party.invalid { grid-column: 1 / -1; background: #4b5563; min-height: 80px; }
-    .link { font-size: 12px; padding: 3px 8px; border-radius: 10px; margin-right: 10px; background: rgba(255,255,255,.2); }
+    .link { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; margin-right: 10px; background: #e3f4ea; color: #146c3a; }
     .link.waiting { background: #f59e0b; color: #111; }
   `,
 })

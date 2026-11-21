@@ -1,5 +1,6 @@
 import { Component, OnDestroy, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonTitle, IonToolbar } from '@ionic/angular';
 import { Api } from '../core/api';
 import { channelSubtitle, channelTitle } from '../core/channel-label';
@@ -14,11 +15,13 @@ import { Calls, type Callee } from '../core/calls';
   selector: 'page-chat',
   imports: [FormsModule, IonBackButton, IonButton, IonButtons, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonTitle, IonToolbar],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/messages" /></ion-buttons>
+  <ion-header><ion-toolbar><ion-buttons slot="start"><ion-back-button defaultHref="/messages" /></ion-buttons>
     <ion-title><div class="t">{{ name() }}</div>@if (sub()) { <div class="st">{{ sub() }}</div> }</ion-title>
-    @if (calls.modes().length) {
-      <ion-buttons slot="end"><ion-button (click)="call()" aria-label="Call"><ion-icon slot="icon-only" name="call" /></ion-button></ion-buttons>
-    }
+    <ion-buttons slot="end">
+      <!-- Coordinators: the other person's work so far (stage, reports, timeline) -->
+      @if (other(); as o) { <ion-button (click)="openPerson(o)" [attr.aria-label]="t('Their work today')"><ion-icon slot="icon-only" name="person-circle" /></ion-button> }
+      @if (calls.modes().length) { <ion-button (click)="call()" aria-label="Call"><ion-icon slot="icon-only" name="call" /></ion-button> }
+    </ion-buttons>
   </ion-toolbar>
   </ion-header>
   <ion-content class="ion-padding">
@@ -38,8 +41,9 @@ import { Calls, type Callee } from '../core/calls';
   </ion-toolbar></ion-footer>`,
   styles: `.t { font-size: 17px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
     .st { font-size: 12px; font-weight: 400; opacity: .85; overflow: hidden; text-overflow: ellipsis; }
-    .msg { background: var(--ion-color-light); border-radius: 12px; padding: 8px 12px; margin: 6px 0; max-width: 82%; }
-    .msg.mine { margin-left: auto; background: #d7efe0; } .queued { opacity: .6; } .who { font-size: 12px; font-weight: 600; }
+    .msg { background: #fff; border: 1px solid var(--r-line); border-radius: 18px 18px 18px 6px; padding: 9px 13px; margin: 6px 0; max-width: 82%; font-size: 15px; }
+    .msg.mine { margin-left: auto; background: var(--r-accent); color: #fff; border-color: var(--r-accent); border-radius: 18px 18px 6px 18px; }
+    .msg.mine .when { color: rgba(255,255,255,.8); } .queued { opacity: .6; } .who { font-size: 12px; font-weight: 600; }
     .when { font-size: 11px; color: var(--ion-color-medium); text-align: right; }`,
 })
 export default class ChatPage implements OnDestroy {
@@ -51,7 +55,10 @@ export default class ChatPage implements OnDestroy {
   me = this.api.me()!.id;
   name = signal('');
   sub = signal('');
-  private t = inject(I18n).t;
+  t = inject(I18n).t;
+  private router = inject(Router);
+  /** In a direct chat, the other person (coordinators can open their work page) */
+  other = signal<string | null>(null);
   messages = signal<any[]>([]);
   names = signal<Record<string, string>>({});
   queued = () => this.outbox.pending().filter((i) => i.kind === 'message' && i.payload['channel'] === this.id());
@@ -77,9 +84,15 @@ export default class ChatPage implements OnDestroy {
     this.name.set(channelTitle(d.channel, this.t));
     this.sub.set(channelSubtitle(d.channel, this.t));
     this.messages.set(d.messages);
+    if (d.channel.kind === 'direct' && this.api.isCoordinator() && !this.other()) {
+      const people = await this.api.get<Callee[]>(`/channels/${id}/people`).catch(() => null);
+      const o = people?.find((p) => p.id !== this.me);
+      if (o) this.other.set(o.id);
+    }
     this.names.set(Object.fromEntries(d.messages.filter((m) => m.sender_id).map((m) => [m.sender_id, m.sender_name ?? ''])));
   }
 
+  openPerson(id: string) { void this.router.navigate(['/person', id]); }
   time(t: string) { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
   async send() {

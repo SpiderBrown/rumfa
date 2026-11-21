@@ -20,15 +20,17 @@ const HOLD_MS = 1500;
   imports: [IonBackButton, IonButtons, IonHeader, IonIcon, IonTitle, IonToolbar],
   template: `
   <ion-header>
-    <ion-toolbar color="primary">
+    <ion-toolbar>
       @if (back()) { <ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons> }
       <ion-title><div class="t">{{ title() }}</div>@if (sub()) { <div class="st">{{ sub() }}</div> }</ion-title>
       <ion-buttons slot="end">
         @if (!outbox.online() || badges.waiting()) {
           <button class="sync" [class.off]="!outbox.online()" (click)="openOutbox()" [attr.aria-label]="syncLabel()">
             <ion-icon [name]="outbox.online() ? 'cloud-upload-outline' : 'cloud-offline'" />
-            {{ outbox.online() ? badges.waiting() : t('Offline') }}
+            {{ outbox.online() ? badges.waiting() + ' ' + t('waiting') : t('Offline') }}
           </button>
+        } @else if (!back()) {
+          <span class="online"><ion-icon name="wifi" /> {{ t('Online') }}</span>
         }
         @if (sos()) {
           <button class="sos" [class.holding]="holding()" (pointerdown)="start($event)" (pointerup)="cancel(true)" (pointerleave)="cancel(false)"
@@ -43,15 +45,18 @@ const HOLD_MS = 1500;
   </ion-header>`,
   styles: `
     :host { display: block; position: relative; z-index: 10; }
-    .t { font-size: 18px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; } .st { font-size: 12px; font-weight: 400; opacity: .85; }
-    .sync { display: flex; align-items: center; gap: 4px; margin-right: 6px; padding: 4px 9px; border: 0; border-radius: 14px; font: inherit; font-size: 13px;
-      font-weight: 600; background: rgba(255,255,255,.18); color: #fff; } .sync.off { background: #f59e0b; color: #111; } .sync ion-icon { font-size: 17px; }
-    .sos { position: relative; width: 58px; height: 34px; margin-right: 8px; border: 0; border-radius: 17px; background: #d32f2f; color: #fff;
+    ion-toolbar { --background: #f3f4f6; --color: var(--r-ink); --min-height: 64px; padding-top: 4px; }
+    .t { font-size: 26px; font-weight: 800; line-height: 1.15; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
+    .st { font-size: 13px; font-weight: 500; color: var(--r-muted); margin-top: 1px; }
+    .sync, .online { display: flex; align-items: center; gap: 5px; margin-right: 8px; padding: 6px 12px; border: 0; border-radius: 999px; font: inherit; font-size: 14px;
+      font-weight: 700; background: #e3f4ea; color: #146c3a; }
+    .sync { background: #fdf3d8; color: #6b4a00; } .sync.off { background: #fde7d6; color: #7a2e0b; } .sync ion-icon, .online ion-icon { font-size: 17px; }
+    .sos { position: relative; width: 62px; height: 38px; margin-right: 10px; border: 0; border-radius: 19px; background: var(--r-urgent); color: #fff;
       font: inherit; font-weight: 800; letter-spacing: .5px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
-      box-shadow: 0 0 0 2px rgba(255,255,255,.85); }
+      box-shadow: 0 2px 8px rgba(179,38,30,.35); }
     .sos.holding { background: #b71c1c; transform: scale(1.06); }
     .ring { position: absolute; inset: -5px -2px; width: calc(100% + 4px); height: calc(100% + 10px); pointer-events: none; }
-    .ring circle { fill: none; stroke: #fff; stroke-width: 3; stroke-dasharray: 101; transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset .05s linear; }
+    .ring circle { fill: none; stroke: var(--r-urgent); stroke-width: 3; stroke-dasharray: 101; transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset .05s linear; }
     .sos span { position: relative; }
   `,
 })

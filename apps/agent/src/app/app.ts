@@ -6,6 +6,8 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { Api } from './core/api';
 import { I18n } from './core/i18n';
 import { Calls } from './core/calls';
+import { Originals } from './core/originals';
+import { Ui } from './core/ui';
 
 @Component({
   selector: 'app-root',
@@ -41,6 +43,8 @@ import { Calls } from './core/calls';
 export class App {
   private api = inject(Api);
   private router = inject(Router);
+  private originals = inject(Originals);
+  private ui = inject(Ui);
   private alert = inject(AlertController);
   private i18n = inject(I18n);
   calls = inject(Calls);
@@ -63,6 +67,7 @@ export class App {
       this.stopCalls?.();
       this.stopCalls = this.api.onChange((c) => this.calls.onCallChange(c), ['calls']);
       void this.calls.checkIncoming();
+      this.calls.watch();
     });
   }
 
@@ -75,7 +80,10 @@ export class App {
       const d = a.notification.data ?? {};
       if (d.template === 'app_call' && d.call_id) void this.calls.incoming(d.call_id);
       else if (d.template === 'live_view_request') void this.router.navigate(['/live', d.request_id]);
-      else if (d.template === 'callback_request') void this.router.navigateByUrl('/coord/callbacks');
+      else if (d.template === 'callback_request') void this.router.navigateByUrl('/tabs/chats');
+      else if (d.template === 'field_task' && d.task_id) void this.router.navigate(['/task', d.task_id]);
+      else if (d.template === 'irev_check') void this.router.navigateByUrl('/irev-check');
+      else if (d.template === 'full_photo_request') void this.originals.sendRequested().then((n) => { if (n) void this.ui.toast('Full photo of your sheet sent'); });
       else if (d.template === 'new_message' && d.channel_id) void this.router.navigate(['/chat', d.channel_id]);
       else if (d.case_id) void this.router.navigateByUrl('/messages');
     });

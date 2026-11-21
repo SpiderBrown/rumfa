@@ -38,6 +38,8 @@ export class Api {
   private sess: Session | null = read<Session>(K.session);
   private refreshing: Promise<boolean> | null = null;
   private socket: Socket | null = null;
+  /** Live updates connected (the apps only poll when they aren't) */
+  readonly live = signal(false);
   private listeners = new Set<(c: Change) => void>();
   private follows = new Set<string>();
 
@@ -198,6 +200,8 @@ export class Api {
     if (this.socket || !this.sess) return;
     this.socket = io(this.base, { path: '/live', transports: ['websocket'], auth: (cb) => cb({ token: this.sess?.accessToken ?? '' }) });
     this.socket.on('change', (c: Change) => this.listeners.forEach((l) => l(c)));
+    this.socket.on('connect', () => this.live.set(true));
+    this.socket.on('disconnect', () => this.live.set(false));
     this.socket.on('connect', () => this.follows.forEach((f) => this.socket!.emit('subscribe', JSON.parse(f))));
     this.socket.on('disconnect', async (reason) => {
       if (this.sess && reason === 'io server disconnect') { await this.refresh(); this.socket?.connect(); }

@@ -12,6 +12,7 @@ export interface MapArea {
   votes: Record<string, number>; leader: { party: string; votes: number; share: number; margin: number } | null;
   open: number; critical: number; high: number; medium: number; low: number; escalated: number;
   agents: number; coordinator: { id: string; full_name: string } | null;
+  checked_in?: number; turnout_units?: number; accredited?: number; turnout_registered?: number;
   /** No outline or location yet: lat/lng is a rough place inside the parent, drawn as a dashed circle of radius_m */
   approx?: boolean; radius_m?: number | null;
 }

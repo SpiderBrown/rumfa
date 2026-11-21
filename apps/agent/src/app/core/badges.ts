@@ -23,7 +23,9 @@ export class Badges {
       void this.refresh();
     });
     this.api.onChange(() => this.soon(), ['messages', 'callback_requests']);
-    setInterval(() => void this.refresh(), 60_000);
+    // Changes come live; poll only while the live connection is down (and a slow check otherwise)
+    let n = 0;
+    setInterval(() => { n++; if (!this.api.live() || n % 5 === 0) void this.refresh(); }, 60_000);
   }
 
   private soon() { if (!this.pending) this.pending = setTimeout(() => { this.pending = null; void this.refresh(); }, 1500); }

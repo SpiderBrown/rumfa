@@ -13,6 +13,8 @@ import { Ui } from '../core/ui';
 interface Coordinator { id: string; full_name: string; level: string; area_code: string }
 import { I18n } from '../core/i18n';
 import { categoryIcon } from '../core/categories';
+import { CALLBACK_REASONS } from '@rumfa/shared';
+import { AgoPipe } from '../core/clock';
 import { type Channel, channelPreview, channelSubtitle, channelTime, channelTitle } from '../core/channel-label';
 
 const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
@@ -23,7 +25,7 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
  */
 @Component({
   selector: 'page-messages',
-  imports: [NgTemplateOutlet, RouterLink, AppBar, IonBadge, IonContent, IonFab, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
+  imports: [NgTemplateOutlet, RouterLink, AppBar, AgoPipe, IonBadge, IonContent, IonFab, IonIcon, IonItem, IonLabel, IonList, IonListHeader, IonNote,
     IonRefresher, IonRefresherContent],
   template: `
   <app-bar [title]="t('Chats')" [sos]="api.atUnit()" />
@@ -53,6 +55,27 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
         <ion-icon name="chevron-forward" class="go" />
       </button>
     }
+    <!-- Coordinators: people who asked to be called, at the top. Tap to open the chat with them, or call straight away -->
+    @if (requests().length) {
+      <p class="section-title">{{ t('Asked to be called') }} <span class="count">{{ requests().length }}</span></p>
+      <div class="card flat reqs">
+        @for (r of requests(); track r.id) {
+          <div class="row-item req">
+            <button class="av sm" (click)="openPerson(r.requester?.id)">{{ initialsOf(r.requester?.full_name ?? '?') }}</button>
+            <button class="rb" (click)="chatWith(r)">
+              <b>{{ r.requester?.full_name }}</b>
+              <small>{{ reason(r.reason) }} · {{ r.requester?.area_code }} · {{ r.created_at | ago }}@if (r.status === 'no_answer') { · {{ t('no answer last time') }} }</small>
+              @if (r.note) { <small class="note">“{{ r.note }}”</small> }
+            </button>
+            @if (r.status === 'calling') {
+              <div class="two"><button class="ok" (click)="doneReq(r, true)">{{ t('Talked') }}</button><button class="no" (click)="doneReq(r, false)">{{ t('No answer') }}</button></div>
+            } @else {
+              <button class="dial" (click)="callReq(r)" [attr.aria-label]="t('Call')"><ion-icon name="call" /></button>
+            }
+          </div>
+        }
+      </div>
+    }
     <ion-list>
       @if (area().length) { <ion-list-header>{{ t('Teams') }}</ion-list-header> }
       @for (c of area(); track c.id) { <ng-container *ngTemplateOutlet="row; context: { $implicit: c }" /> }
@@ -79,6 +102,9 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
         </ion-label>
         <div slot="end" class="end">
           <ion-note>{{ when(c) }}</ion-note>
+          @if (c.kind === 'direct' && api.isCoordinator() && calls.modes().length) {
+            <button class="dial sm" (click)="$event.stopPropagation(); $event.preventDefault(); callChat(c)" [attr.aria-label]="t('Call')"><ion-icon name="call" /></button>
+          }
           @if (c.unread) { <ion-badge color="primary">{{ c.unread >= 100 ? '99+' : c.unread }}</ion-badge> }
         </div>
       </ion-item>
@@ -92,13 +118,23 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
     }
   </ion-content>`,
   styles: `
-    .coord { margin: 12px 12px 6px; padding: 12px; border-radius: 16px; background: #f1f8f3; border: 1px solid #d5eadb; }
+    .coord { margin: 12px 12px 6px; padding: 14px; border-radius: 20px; background: #fff; border: 1px solid var(--r-line); box-shadow: 0 2px 10px rgba(15,23,42,.05); }
+    .section-title { margin: 16px 16px 8px; display: flex; align-items: center; gap: 6px; }
+    .count { background: var(--r-urgent); color: #fff; border-radius: 999px; padding: 1px 8px; font-size: 12px; letter-spacing: 0; }
+    .reqs { margin: 0 12px 6px; }
+    .req { gap: 10px; } .av.sm { width: 40px; height: 40px; border: 0; font: inherit; font-weight: 800; font-size: 14px; }
+    .rb { flex: 1; min-width: 0; border: 0; background: none; text-align: left; font: inherit; padding: 0; color: var(--r-ink); }
+    .rb b { display: block; } .rb small { display: block; color: var(--r-muted); font-size: 13px; } .rb .note { color: var(--r-ink-2); font-style: italic; }
+    .dial { width: 44px; height: 44px; border-radius: 50%; border: 0; background: #16a34a; color: #fff; display: grid; place-items: center; font-size: 20px; flex: none; }
+    .dial.sm { width: 32px; height: 32px; font-size: 16px; }
+    .two { display: flex; flex-direction: column; gap: 4px; } .two button { border: 0; border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 800; }
+    .two .ok { background: #16a34a; color: #fff; } .two .no { background: #eef1f4; color: var(--r-ink); }
     .ctop { display: flex; align-items: center; gap: 12px; }
     .cw { flex: 1; display: flex; flex-direction: column; min-width: 0; } .cw b { font-size: 16px; } .cl { font-size: 11px; font-weight: 700;
       text-transform: uppercase; letter-spacing: .5px; color: var(--ion-color-primary); } .cw .sub { font-size: 12px; color: var(--ion-color-medium); }
     .cacts { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; margin-top: 12px; }
     .cacts button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 0; border-radius: 12px;
-      background: #fff; color: var(--ion-color-primary); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+      background: var(--r-accent-soft); color: var(--r-accent); font: inherit; font-size: 13px; font-weight: 700; }
     .cacts button ion-icon { font-size: 22px; } .cacts button.open { outline: 2px solid var(--ion-color-primary); }
     .hintline.open { color: var(--ion-color-primary); font-weight: 600; }
     .report { display: flex; align-items: center; gap: 8px; height: 54px; padding: 0 22px 0 18px; border: 0; border-radius: 27px; background: #ea580c;
@@ -108,9 +144,9 @@ const LEVEL_ORDER: Record<string, number> = { ward: 0, lga: 1, state: 2 };
     .callme { display: flex; align-items: center; gap: 12px; width: calc(100% - 24px); margin: 12px 12px 6px; padding: 14px; border: 1px solid #d5eadb;
       border-radius: 16px; background: #f1f8f3; color: var(--ion-text-color); font: inherit; text-align: left; }
     .callme span { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
-    .callme > ion-icon:first-child { font-size: 28px; color: var(--ion-color-primary); } .callme .go { font-size: 20px; opacity: .5; } .cacts button.primary { background: var(--ion-color-primary); color: #fff; }
+    .callme > ion-icon:first-child { font-size: 28px; color: var(--r-accent); } .callme .go { font-size: 20px; opacity: .5; } .cacts button.primary { background: var(--r-accent); color: #fff; }
     .hintline { margin-top: 8px; font-size: 12px; color: var(--ion-color-medium); text-align: center; }
-    .avatar { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-right: 12px;
+    .avatar { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-right: 12px;
       background: #e7f1ea; color: var(--ion-color-primary); font-weight: 700; }
     .avatar ion-icon { font-size: 22px; } .avatar.case { background: #fdeee4; color: #c2410c; } .avatar.direct { background: #e6eefb; color: #1d4ed8; }
     h2 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
@@ -146,10 +182,45 @@ export default class MessagesPage implements OnDestroy, ViewWillEnter {
   private stopCallback = this.api.onChange(() => void this.loadCallback(), ['callback_requests']);
   private pending: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() { void this.load(); void this.loadCoordinator(); void this.loadCallback(); }
+  /** Coordinators: call requests waiting for them (merged in from the old Requests tab) */
+  requests = signal<any[]>([]);
+  private stopReq = this.api.onChange(() => void this.loadRequests(), ['callback_requests']);
+
+  constructor() { void this.load(); void this.loadCoordinator(); void this.loadCallback(); void this.loadRequests(); }
+
+  async loadRequests() {
+    if (!this.api.isCoordinator()) return;
+    const r = await this.api.get<any[]>('/callbacks', { mine: true, status: 'waiting,calling,no_answer' }).catch(() => null);
+    if (r) this.requests.set(r);
+  }
+  reason(c: string) { return this.t(CALLBACK_REASONS.find((r) => r.code === c)?.label ?? c); }
+  openPerson(id?: string) { if (id) void this.router.navigate(['/person', id]); }
+  /** Opens the chat with the person who asked (their history is there) */
+  async chatWith(r: any) {
+    if (!r.requester?.id) return;
+    try { await this.router.navigate(['/chat', await this.directWith({ id: r.requester.id } as Coordinator)], { queryParams: { request: r.id } }); }
+    catch (e) { await this.ui.error(e); }
+  }
+  /** Rings the coordinator's phone first, then connects the agent (normal phone lines); no internet: dial directly */
+  async callReq(r: any) {
+    try {
+      const res = await this.api.post<{ bridged: boolean; dialDirect?: string }>(`/callbacks/${r.id}/call`);
+      if (res.bridged) await this.ui.toast('Your phone will ring now. Answer it and we connect the agent.');
+      else if (res.dialDirect) window.location.href = `tel:${res.dialDirect}`;
+    } catch { window.location.href = `tel:${r.requester?.phone}`; }
+    await this.loadRequests();
+  }
+  async doneReq(r: any, answered: boolean) {
+    await this.api.post(`/callbacks/${r.id}/complete`, { answered, outcome: answered ? 'Talked' : undefined }).catch((e) => this.ui.error(e));
+    await this.loadRequests();
+  }
+  async callChat(c: Channel) {
+    const people = await this.api.get<any[]>(`/channels/${c.id}/people`).catch(async (e) => { await this.ui.error(e); return null; });
+    if (people) await this.calls.fromChat(c.id, people);
+  }
   /** Coming back from a chat: its unread count is now 0 */
-  ionViewWillEnter() { if (this.loaded()) { void this.load(); void this.loadCallback(); } }
-  ngOnDestroy() { this.stopLive(); this.stopCallback(); this.unfollow.forEach((f) => f()); if (this.pending) clearTimeout(this.pending); }
+  ionViewWillEnter() { if (this.loaded()) { void this.load(); void this.loadCallback(); void this.loadRequests(); } }
+  ngOnDestroy() { this.stopLive(); this.stopCallback(); this.stopReq(); this.unfollow.forEach((f) => f()); if (this.pending) clearTimeout(this.pending); }
 
   private soon() { if (!this.pending) this.pending = setTimeout(() => { this.pending = null; void this.load(); }, 1500); }
 
@@ -183,7 +254,7 @@ export default class MessagesPage implements OnDestroy, ViewWillEnter {
     try { await this.calls.fromChat(await this.directWith(c), [{ id: c.id, full_name: c.full_name, role: 'coordinator' }]); } catch (e) { await this.ui.error(e); }
   }
   levelName(l: string) { return ({ ward: 'Ward coordinator', lga: 'LGA coordinator', state: 'State coordinator' } as Record<string, string>)[l] ?? 'Coordinator'; }
-  initialsOf(name: string) { return name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); }
+  initialsOf(name: string) { return name.replace(/[^\p{L}\s]/gu, '').split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); }
 
   async load() {
     const [a, all] = await Promise.all([this.api.get<Channel[]>('/channels/area').catch(() => null), this.api.get<Channel[]>('/channels').catch(() => null)]);
@@ -202,5 +273,5 @@ export default class MessagesPage implements OnDestroy, ViewWillEnter {
   preview(c: Channel) { return channelPreview(c, this.t); }
   when(c: Channel) { return channelTime(c.last?.at, this.t); }
   icon(c: Channel) { return categoryIcon(c.label?.categoryCode); }
-  initials(c: Channel) { return (c.label?.person ?? '?').split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); }
+  initials(c: Channel) { return (c.label?.person ?? '?').replace(/[^\p{L}\s]/gu, '').split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); }
 }

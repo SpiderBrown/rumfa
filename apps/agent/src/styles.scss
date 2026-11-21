@@ -6,24 +6,55 @@
 @import '@ionic/angular/css/flex-utils.css';
 @import '@ionic/angular/css/display.css';
 
-// Large, high-contrast UI for agents who are not used to apps.
+// Rumfa look (same as the Room): calm greys, one teal accent, Inter. Large, high-contrast controls for agents who
+// are not used to apps: big tap targets, bold labels, colour that means something.
 :root {
-  --ion-color-primary: #0b6b3a;
-  --ion-color-primary-rgb: 11, 107, 58;
+  --ion-color-primary: #0f766e;
+  --ion-color-primary-rgb: 15, 118, 110;
   --ion-color-primary-contrast: #ffffff;
-  --ion-color-primary-shade: #095e33;
-  --ion-color-primary-tint: #237a4e;
-  --ion-font-family: system-ui, Roboto, sans-serif;
+  --ion-color-primary-shade: #0b5a54;
+  --ion-color-primary-tint: #278a82;
+  --ion-color-danger: #b3261e; --ion-color-danger-rgb: 179, 38, 30; --ion-color-danger-shade: #8f1d1d; --ion-color-danger-tint: #c0453e;
+  --ion-color-warning: #d97706; --ion-color-success: #16a34a;
+  --ion-background-color: #f3f4f6;
+  --ion-text-color: #14171f;
+  --ion-font-family: Inter, system-ui, Roboto, sans-serif;
+  --r-ink: #14171f; --r-ink-2: #3d4652; --r-muted: #5b6675; --r-line: #e1e5eb; --r-line-soft: #eef1f4;
+  --r-accent: #0f766e; --r-accent-soft: #e6f3f1; --r-urgent: #b3261e; --r-high: #b4541a; --r-blue: #1f4e8c;
   font-size: 17px;
 }
-ion-button { --border-radius: 12px; min-height: 52px; font-size: 1.05rem; text-transform: none; }
+ion-content { --background: #f3f4f6; }
+ion-toolbar { --background: #f3f4f6; --color: var(--r-ink); --border-width: 0 !important; }
+ion-toolbar ion-title { font-weight: 800; font-size: 20px; }
+ion-header { box-shadow: none !important; }
+ion-header::after { display: none; }
+ion-button { --border-radius: 14px; min-height: 52px; font-size: 1.05rem; font-weight: 700; text-transform: none; letter-spacing: 0; --box-shadow: none; }
+ion-list { background: transparent; }
+
+// Cards and sections, as in the mockups
+.card { background: #fff; border: 1px solid var(--r-line); border-radius: 18px; padding: 14px 16px; margin: 0 0 12px; }
+.card.flat { padding: 0; overflow: hidden; }
+.section-title { margin: 18px 4px 8px; font-size: 13px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--r-muted); }
+.page-title { margin: 6px 0 14px; font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+.row-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--r-line-soft); }
+.row-item:last-child { border-bottom: 0; }
+.ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.ico ion-icon { font-size: 24px; }
+.ico.teal { background: var(--r-accent-soft); color: var(--r-accent); } .ico.blue { background: #e3ecf7; color: var(--r-blue); }
+.ico.orange { background: #fde7d6; color: var(--r-high); } .ico.red { background: #fdecea; color: var(--r-urgent); } .ico.grey { background: #eef1f4; color: var(--r-ink-2); }
+.av { width: 44px; height: 44px; border-radius: 50%; background: var(--r-blue); color: #fff; display: grid; place-items: center; font-weight: 800; flex: none; }
+.big-input { width: 100%; font: inherit; font-size: 20px; padding: 14px 16px; border: 1.5px solid #d5dae1; border-radius: 14px; background: #fff; color: var(--r-ink); box-sizing: border-box; }
+.big-input:focus { outline: none; border-color: var(--r-accent); box-shadow: 0 0 0 3px rgba(15,118,110,.15); }
+textarea.big-input { font-size: 17px; min-height: 88px; resize: vertical; }
+
+// Older shared classes, kept for pages that use them
 .big-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
 .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 108px;
-  border-radius: 16px; background: var(--ion-color-light); font-weight: 600; text-align: center; padding: 10px; color: var(--ion-text-color); }
+  border-radius: 16px; background: #fff; border: 1px solid var(--r-line); font-weight: 700; text-align: center; padding: 10px; color: var(--ion-text-color); }
 .tile ion-icon { font-size: 34px; color: var(--ion-color-primary); }
-.tile.sos { background: #b3261e; color: white; } .tile.sos ion-icon { color: white; }
-.tile.done ion-icon { color: #0b6b3a; }
-.hint { color: var(--ion-color-medium); font-size: 0.9rem; }
+.tile.sos { background: #b3261e; color: white; border: 0; } .tile.sos ion-icon { color: white; }
+.tile.done ion-icon { color: #16a34a; }
+.hint { color: var(--r-muted); font-size: 0.9rem; }
 .num input { font-size: 1.4rem !important; text-align: right; }
 
 /* Alerts whose message has paragraphs */

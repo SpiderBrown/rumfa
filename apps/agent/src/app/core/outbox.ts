@@ -3,6 +3,7 @@ import { Network } from '@capacitor/network';
 import { encodeCallbackSms, encodeIncidentSms, encodeResultSms, type Severity } from '@rumfa/shared';
 import { Api, ApiError } from './api';
 import { Ui } from './ui';
+import { Originals } from './originals';
 
 /**
  * Offline-first queue. Every report is saved on the phone first (IndexedDB),
@@ -16,6 +17,7 @@ export interface OutItem {
   kind: ItemKind;
   payload: Record<string, any>;
   photo?: Blob | null;        // EC8A photo or incident photo
+  photos?: Blob[];            // more photos for an incident (the first one is in photo)
   createdAt: number;
   status: 'waiting' | 'sending' | 'sent' | 'failed';
   error?: string;
@@ -51,6 +53,7 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 export class Outbox {
   private api = inject(Api);
   private ui = inject(Ui);
+  private originals = inject(Originals);
   /** Everything stored on this phone, for every person and organisation that has signed in here. */
   private readonly all = signal<OutItem[]>([]);
   /** Only the signed-in person's items, for the organisation they are signed in to now. Others stay stored until that person signs back in. */
@@ -69,6 +72,9 @@ export class Outbox {
     void Network.addListener('networkStatusChange', (s) => { this.online.set(s.connected); if (s.connected) void this.sync(); });
     setInterval(() => void this.sync(), 30_000);
     void this.sync();
+    // Full-resolution sheet photos the room asked for: when the app opens, on the push, and every 30 minutes
+    void this.originals.sendRequested();
+    setInterval(() => void this.originals.sendRequested(), 30 * 60_000);   // a push says when; this is the slow fallback
   }
 
   private async reload() {
@@ -80,9 +86,10 @@ export class Outbox {
 
   private async put(i: OutItem) { await tx('readwrite', (s) => s.put(i)); await this.reload(); }
 
-  async add(kind: ItemKind, payload: Record<string, any>, label: string, photo?: Blob | null): Promise<OutItem> {
+  async add(kind: ItemKind, payload: Record<string, any>, label: string, photo?: Blob | Blob[] | null): Promise<OutItem> {
     const me = this.api.me();
-    const item: OutItem = { id: crypto.randomUUID(), kind, payload, photo: photo ?? null, createdAt: Date.now(), status: 'waiting', label,
+    const list = Array.isArray(photo) ? photo : photo ? [photo] : [];
+    const item: OutItem = { id: crypto.randomUUID(), kind, payload, photo: list[0] ?? null, photos: list.slice(1), createdAt: Date.now(), status: 'waiting', label,
       tenantId: me?.tenant_id, memberId: me?.id, agentCode: me?.agent_code ?? null };
     await this.put(item);
     void this.sync();
@@ -99,8 +106,11 @@ export class Outbox {
   }
 
   /** Can this item go by SMS, and is it time to offer it? */
+  /** The organisation's SMS number is set (config.js); a placeholder means SMS sending isn't set up */
+  readonly smsReady = /^\+?\d{4,15}$/.test(window.RUMFA_CONFIG.smsNumber ?? '') && !/^\+?2340+$/.test(window.RUMFA_CONFIG.smsNumber ?? '');
+
   smsOffer(i: OutItem): boolean {
-    return ['result', 'incident', 'callback'].includes(i.kind) && i.status !== 'sent' && !i.smsSentAt
+    return this.smsReady && ['result', 'incident', 'callback'].includes(i.kind) && i.status !== 'sent' && !i.smsSentAt
       && (!this.online() || Date.now() - i.createdAt > SMS_OFFER_AFTER_MS);
   }
 
@@ -131,7 +141,7 @@ export class Outbox {
     i.smsSentAt = Date.now();
     // Results stay queued so the photo still uploads later (the server merges them);
     // incidents and callbacks without photos are done once the SMS is sent.
-    if (i.kind === 'callback' || (i.kind === 'incident' && !i.photo)) i.status = 'sent';
+    if (i.kind === 'callback' || (i.kind === 'incident' && !i.photo && !i.photos?.length)) i.status = 'sent';
     await this.put(i);
   }
 
@@ -168,7 +178,7 @@ export class Outbox {
         try {
           i.status = 'sending'; await this.put(i);
           await this.send(i);
-          i.status = 'sent'; i.error = undefined; i.photo = null;
+          i.status = 'sent'; i.error = undefined; i.photo = null; i.photos = [];
           this.online.set(true);
         } catch (e: any) {
           // Business errors (e.g. wrong unit) will not fix themselves; connection and server errors retry
@@ -187,14 +197,16 @@ export class Outbox {
     const clientId = i.id;
     switch (i.kind) {
       case 'incident': {
-        const mediaPaths = i.photo ? [await this.api.upload('incident', i.photo, 'jpg', p['pu'])] : [];
+        const mediaPaths: string[] = [];
+        for (const b of [i.photo, ...(i.photos ?? [])]) if (b) mediaPaths.push(await this.api.upload('incident', b, 'jpg', p['pu']));
         await this.api.post('/incidents', { pu: p['pu'], category: p['category'], severity: p['severity'] ?? undefined,
           description: p['description'] ?? undefined, mediaPaths, sos: !!p['sos'], clientId });
         return;
       }
       case 'incident_details': {
         // Follows its report (the outbox sends oldest first), found on the server by that report's id
-        const mediaPaths = i.photo ? [await this.api.upload('incident', i.photo, 'jpg', p['pu'])] : [];
+        const mediaPaths: string[] = [];
+        for (const b of [i.photo, ...(i.photos ?? [])]) if (b) mediaPaths.push(await this.api.upload('incident', b, 'jpg', p['pu']));
         await this.api.post('/incidents/details', { clientId: p['reportId'], category: p['category'] ?? undefined, note: p['note'] ?? undefined,
           mediaPaths, mistake: p['mistake'] ?? undefined });
         return;
@@ -206,7 +218,7 @@ export class Outbox {
         return;
       }
       case 'callback':
-        await this.api.post('/callbacks', { reason: p['reason'] });
+        await this.api.post('/callbacks', { reason: p['reason'], note: p['note'] || undefined });
         return;
       case 'checkin':
         await this.api.post('/checkins', { pu: p['pu'], lat: p['lat'], lng: p['lng'], accuracy: p['accuracy'], at: p['at'] ?? new Date(i.createdAt).toISOString(), note: p['note'] ?? undefined, clientId });

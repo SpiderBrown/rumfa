@@ -12,6 +12,8 @@ import { Checkin } from '../core/checkin';
 import { CheckinFlow } from '../core/checkin-flow';
 import { Checklist, DAY_STAGES, type ChecklistItem, type DayStage } from '../core/checklist';
 import { DayJourney } from '../core/day';
+import { IrevChecks } from '../core/irev-checks';
+import { Tasks } from '../core/tasks';
 import { LiveCount } from '../core/live-count';
 import { type Stage, UnitFiguresService } from '../core/unit-figures';
 
@@ -32,12 +34,38 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
       <div class="empty"><ion-icon name="today" /><b>{{ t('No polling unit assigned to you') }}</b>
         <p>{{ t('Your coordinator assigns polling units. Use Chats to reach them.') }}</p></div>
     } @else {
-    <div class="top">
-      <div class="prog"><span class="track"><i [style.width.%]="progress() * 100"></i></span> {{ doneStages() }} / {{ stages.length }} {{ t('stages') }}</div>
-      @if (turnout() !== null) { <div class="turn"><b>{{ pct(turnout()!) }}</b> {{ t('turnout so far') }} · {{ latest().accredited }} / {{ latest().registered }}</div> }
-      @if (figs.pendingCount()) { <div class="wait">{{ figs.pendingCount() }} {{ t('saved on phone, will send when there is signal') }}</div> }
+    <!-- Where the day stands: the stage now, the next thing to do, and quick ways out -->
+    <div class="hero">
+      <div class="hero-top">
+        <span class="eyebrow">{{ current() ? t('Now') : t('All done') }}</span>
+        <span class="count">{{ doneStages() }} / {{ stages.length }} {{ t('stages') }}</span>
+      </div>
+      <b class="stage-now">{{ currentTitle() }}</b>
+      <div class="segs">@for (s of stages; track s.id) { <i [class.done]="stageDone(s.id)" [class.now]="current() === s.id"></i> }</div>
+      @if (nextStep(); as n) { <p class="next"><ion-icon name="arrow-forward" /> {{ n }}</p> }
+      @if (turnout() !== null) {
+        <div class="turn"><b>{{ pct(turnout()!) }}</b><span>{{ t('turnout so far') }} · {{ latest().accredited }} / {{ latest().registered }}</span></div>
+      }
+      @if (figs.pendingCount()) { <div class="wait"><ion-icon name="cloud-offline" /> {{ figs.pendingCount() }} {{ t('saved on phone, will send when there is signal') }}</div> }
     </div>
 
+    <div class="quick">
+      <button (click)="report()"><span class="ico orange"><ion-icon name="warning" /></span>{{ t('Report') }}</button>
+      <button routerLink="/count" [disabled]="ci.required()"><span class="ico teal"><ion-icon name="speedometer" /></span>{{ t('Live count') }}</button>
+      <button routerLink="/result" [disabled]="ci.required()"><span class="ico blue"><ion-icon name="document-text" /></span>{{ t('Result') }}</button>
+      <button routerLink="/callback"><span class="ico grey"><ion-icon name="call" /></span>{{ t('Ask to be called') }}</button>
+    </div>
+
+    <!-- Tasks the situation room sent me -->
+    @for (k of tasks.open(); track k.id) {
+      <button class="card roomtask" (click)="openTask(k.id)">
+        <span class="ico blue"><ion-icon name="headset" /></span>
+        <span class="rt"><small>{{ t('Task from the room') }}@if (!k.seen_at) { · <b class="new">{{ t('New') }}</b> }</small><b>{{ k.title }}</b></span>
+        <ion-icon name="chevron-forward" />
+      </button>
+    }
+
+    <p class="section-title">{{ t('Your day') }}</p>
     @for (s of stages; track s.id; let i = $index) {
       <section class="step" [class.done]="stageDone(s.id)" [class.now]="current() === s.id" [class.locked]="locked(s.id)">
         <button class="head" (click)="toggle(s.id)">
@@ -104,10 +132,17 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
                   }
                   @case ('accreditation') {
                     <div class="task" [class.ok]="figs.accreditationUpdates().length">
-                      <label class="field">
-                        <span class="lbl"><span class="item">{{ t('Item') }} 2</span> {{ t('Accredited so far') }}</span>
-                        <input type="number" inputmode="numeric" min="0" [ngModel]="draft['acc']" (ngModelChange)="setDraft('acc', $event)" />
-                      </label>
+                      <span class="lbl"><span class="item">{{ t('Item') }} 2</span> {{ t('Accredited so far') }}</span>
+                      <!-- Type the number, or nudge it with the buttons -->
+                      <div class="stepper">
+                        <button (click)="step(-10)" [attr.aria-label]="t('Minus 10')">−10</button>
+                        <button (click)="step(-1)" [attr.aria-label]="t('Minus 1')"><ion-icon name="remove" /></button>
+                        <input type="number" inputmode="numeric" min="0" [ngModel]="draft['acc']" (ngModelChange)="setDraft('acc', $event)"
+                          [placeholder]="placeholder('accredited') || '0'" [attr.aria-label]="t('Accredited so far')" />
+                        <button (click)="step(1)" [attr.aria-label]="t('Plus 1')"><ion-icon name="add" /></button>
+                        <button (click)="step(10)" [attr.aria-label]="t('Plus 10')">+10</button>
+                      </div>
+                      @if (latest().registered) { <div class="sub center">{{ t('of') }} {{ latest().registered }} {{ t('on register') }} · {{ pct((draft['acc'] ?? latest().accredited ?? 0) / latest().registered!) }}</div> }
                       @for (w of draftWarnings('accreditation', ['accredited']); track w.flag) { <p class="warn">⚠ {{ w.message }}</p> }
                       <ion-button expand="block" (click)="sendFigures('accreditation', ['accredited'])" [disabled]="draft['acc'] == null">{{ t('Send update') }}</ion-button>
                       <div class="sub">{{ t('Send as often as you can. The final number is sent at the close of poll.') }}</div>
@@ -135,6 +170,11 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
                       <div class="sub">{{ resultSent() ? t('Result sent') : t('The figures you already sent are filled in for you.') }}</div>
                       <ion-button expand="block" [fill]="resultSent() ? 'outline' : 'solid'" routerLink="/result">
                         <ion-icon slot="start" name="document-text" />{{ resultSent() ? t('Correct the result') : t('Fill in the result sheet') }}</ion-button>
+                      @if (irev.pending().length) {
+                        <ion-button expand="block" color="warning" routerLink="/irev-check"><ion-icon slot="start" name="alert-circle" />{{ t('Check your sheet against IReV') }}</ion-button>
+                      } @else if (resultSent()) {
+                        <ion-button expand="block" fill="clear" routerLink="/irev-check">{{ irev.list().length ? t('Your IReV check') : t('Is your sheet on IReV yet?') }}</ion-button>
+                      }
                     </div>
                   }
 
@@ -157,37 +197,56 @@ const ITEM = Object.fromEntries(UNIT_FIGURE_ITEMS.map((i) => [i.key, i]));
     }
   </ion-content>`,
   styles: `
-    .top { padding: 14px 16px 6px; } .unit { color: var(--ion-color-medium); font-size: 13px; }
-    .prog { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ion-color-medium); margin-top: 4px; }
-    .track { flex: 1; height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; } .track i { display: block; height: 100%; background: #16a34a; transition: width .4s; }
-    .turn { font-size: 15px; margin-top: 6px; } .turn b { font-size: 22px; color: var(--ion-color-primary); }
-    .wait { margin-top: 4px; font-size: 13px; color: #b45309; }
-    .step { margin: 8px 12px; border-radius: 14px; background: var(--ion-color-light); border: 2px solid transparent; }
-    .step.now { border-color: var(--ion-color-primary); background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .hero { margin: 12px 12px 0; padding: 16px; border-radius: 20px; background: linear-gradient(135deg, #0f766e, #115e59); color: #fff; box-shadow: 0 6px 18px rgba(15,118,110,.25); }
+    .hero-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .eyebrow { font-weight: 800; letter-spacing: .06em; text-transform: uppercase; opacity: .85; } .count { opacity: .85; }
+    .stage-now { display: block; font-size: 24px; font-weight: 800; margin: 4px 0 10px; }
+    .segs { display: flex; gap: 4px; } .segs i { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); }
+    .segs i.done { background: #fff; } .segs i.now { background: #fbbf24; }
+    .next { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 15px; font-weight: 600; }
+    .turn { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.2); font-size: 14px; }
+    .turn b { font-size: 26px; }
+    .wait { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; background: rgba(255,255,255,.15); padding: 6px 10px; border-radius: 10px; }
+    .roomtask { display: flex; align-items: center; gap: 12px; width: calc(100% - 24px); margin: 0 12px 10px; text-align: left; font: inherit; color: var(--r-ink); border-color: #c7d7ee; background: #f3f7fd; }
+    .rt { flex: 1; min-width: 0; } .rt small { display: block; color: var(--r-blue); font-weight: 700; font-size: 12px; } .rt b { display: block; }
+    .new { color: var(--r-urgent); }
+    .quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px; }
+    .quick button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 2px; border: 1px solid var(--r-line); border-radius: 16px;
+      background: #fff; font: inherit; font-size: 12px; font-weight: 700; color: var(--r-ink); text-align: center; line-height: 1.2; }
+    .quick button:disabled { opacity: .45; }
+    .section-title { margin: 18px 16px 4px; }
+    .step { margin: 8px 12px; border-radius: 18px; background: #fff; border: 1px solid var(--r-line); }
+    .step.done { background: #f8fafb; }
+    .step.now { border: 2px solid var(--r-accent); box-shadow: 0 4px 14px rgba(15,118,110,.12); }
     .step.locked { opacity: .6; }
     .head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px; background: none; border: 0; text-align: left; font: inherit; color: inherit; }
-    .dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; background: #e2e8f0; color: #475569; }
-    .step.done .dot { background: #16a34a; color: #fff; } .step.now .dot { background: var(--ion-color-primary); color: #fff; }
-    .ht { flex: 1; display: flex; flex-direction: column; } .ht b { font-size: 16px; } .ht small { color: var(--ion-color-medium); font-size: 13px; margin-top: 2px; }
-    .tag { font-size: 12px; font-weight: 700; color: #fff; background: var(--ion-color-primary); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; background: #e2e8f0; color: #475569; }
+    .step.done .dot { background: #16a34a; color: #fff; } .step.now .dot { background: var(--r-accent); color: #fff; }
+    .ht { flex: 1; display: flex; flex-direction: column; } .ht b { font-size: 17px; font-weight: 700; } .ht small { color: var(--ion-color-medium); font-size: 13px; margin-top: 2px; }
+    .tag { font-size: 12px; font-weight: 700; color: #fff; background: var(--r-accent); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
     .tag.left { background: #f59e0b; color: #111; }
     .body { padding: 0 12px 12px; }
     .task { border-left: 4px solid #cbd5e1; padding: 8px 0 10px 12px; margin: 6px 0; }
     .task.ok { border-left-color: #16a34a; } .task.bad { border-left-color: #d97706; } .task.plain { border-left-color: transparent; padding-left: 0; }
     .q { font-size: 16px; font-weight: 500; line-height: 1.3; } .sub { font-size: 13px; color: var(--ion-color-medium); margin-top: 3px; }
     .yn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
-    .yn button { min-height: 46px; border-radius: 12px; border: 2px solid #cbd5e1; background: #fff; font: inherit; font-size: 17px; font-weight: 600; color: var(--ion-text-color); }
+    .yn button { min-height: 50px; border-radius: 14px; border: 2px solid #cbd5e1; background: #fff; font: inherit; font-size: 17px; font-weight: 600; color: var(--ion-text-color); }
     .yn .yes.on { background: #16a34a; border-color: #16a34a; color: #fff; } .yn .no.on { background: #d97706; border-color: #d97706; color: #fff; }
     .timeset { display: flex; gap: 10px; margin-top: 8px; }
-    .timeset .now { flex: 1; min-height: 46px; border-radius: 12px; border: 0; background: var(--ion-color-primary); color: #fff; font: inherit; font-weight: 600; font-size: 16px; }
+    .timeset .now { flex: 1; min-height: 50px; border-radius: 14px; border: 0; background: var(--r-accent); color: #fff; font: inherit; font-weight: 600; font-size: 16px; }
     .timeset input { width: 130px; font-size: 18px; padding: 8px; border: 2px solid #cbd5e1; border-radius: 12px; background: #fff; }
     .timev { display: flex; align-items: baseline; gap: 12px; margin-top: 6px; } .timev b { font-size: 20px; }
     .link { background: none; border: 0; color: var(--ion-color-primary); font: inherit; font-weight: 600; padding: 0; }
     .field { display: block; margin: 10px 0; } .lbl { display: block; font-size: 14px; margin-bottom: 4px; }
-    .item { font-size: 11px; font-weight: 700; color: var(--ion-color-primary); background: #e7f1ea; padding: 1px 6px; border-radius: 6px; margin-right: 4px; }
-    .field input { width: 100%; font-size: 22px; padding: 10px 12px; border: 2px solid #cbd5e1; border-radius: 10px; background: #fff; }
-    input:focus { outline: none; border-color: var(--ion-color-primary); }
+    .item { font-size: 11px; font-weight: 700; color: var(--r-accent); background: var(--r-accent-soft); padding: 1px 6px; border-radius: 6px; margin-right: 4px; }
+    .field input { width: 100%; font-size: 22px; padding: 12px 14px; border: 1.5px solid #d5dae1; border-radius: 14px; background: #fff; }
+    input:focus { outline: none; border-color: var(--r-accent); box-shadow: 0 0 0 3px rgba(15,118,110,.15); }
     .warn { color: #b45309; font-size: 14px; margin: 6px 0; } .hint { color: var(--ion-color-medium); font-size: 13px; margin: 0 0 6px; }
+    .stepper { display: grid; grid-template-columns: 52px 52px 1fr 52px 52px; gap: 6px; margin: 8px 0; }
+    .stepper button { height: 58px; border-radius: 14px; border: 1.5px solid #d5dae1; background: #fff; font: inherit; font-size: 16px; font-weight: 800; color: var(--r-accent); }
+    .stepper button ion-icon { font-size: 24px; } .stepper button:active { background: var(--r-accent-soft); }
+    .stepper input { min-width: 0; height: 58px; box-sizing: border-box; text-align: center; font-size: 28px; font-weight: 800; border: 2px solid var(--r-accent); border-radius: 14px; background: #fff; }
+    .center { text-align: center; }
     .hist { margin-top: 10px; font-size: 14px; } .hist div { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
     .hist b { min-width: 48px; } .foot { margin: 16px 16px 96px; }
     .empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 56px 32px; color: var(--ion-color-medium); }
@@ -217,7 +276,9 @@ export default class UnitPage {
   /** null: follow the current stage; 'none': all closed; otherwise the stage the agent opened */
   private opened = signal<DayStage | 'none' | null>(null);
 
-  constructor() { if (this.api.isAgent()) void this.lc.open(); }
+  tasks = inject(Tasks);
+  openTask(id: string) { void this.router.navigate(['/task', id]); }
+  constructor() { this.tasks.start(); if (this.api.isAgent()) { void this.lc.open(); this.irev.watch(() => this.resultSent()); } }
 
   /** The Report button shrinks to an icon while scrolling down, so it never covers what the agent is reading */
   compact = signal(false);
@@ -234,12 +295,30 @@ export default class UnitPage {
   day = inject(DayJourney);
   turnout = computed(() => { const l = this.latest(); return l.registered && l.accredited != null ? l.accredited / l.registered : null; });
   resultSent = this.day.resultSent;
+  irev = inject(IrevChecks);
   countDone = this.day.countDone;
   total = computed(() => { const c = this.lc.state(); return c ? Object.values(c.counts).reduce((a, b) => a + b, 0) + c.invalid : 0; });
   tasksOf(id: DayStage) { return this.day.tasksOf(id); }
   left(id: DayStage) { this.rev(); return this.day.left(id); }
   stageDone(id: DayStage) { return this.left(id) === 0; }
   doneStages = this.day.doneStages;
+  currentTitle() { const c = this.current(); return c ? this.t(DAY_STAGES.find((s) => s.id === c)!.title) : this.t('Your day is complete'); }
+  /** The first thing still to do in the current stage, said plainly */
+  nextStep(): string {
+    this.rev();
+    const c = this.current(); if (!c) return '';
+    if (this.locked(c) || (c === 'arrival' && !this.ci.checkedIn())) return this.t('Check in when you reach your polling unit');
+    const task = this.tasksOf(c).find((x) => this.day.taskDone(x) === false);
+    if (!task) return '';
+    switch (task.kind) {
+      case 'question': return this.t(task.item.text);
+      case 'figures': return this.t('Send the figures for this stage');
+      case 'accreditation': return this.t('Send how many are accredited so far');
+      case 'count': return this.t('Open live count and tap each ballot');
+      case 'result': return this.t('Fill in the result sheet');
+      default: return '';
+    }
+  }
   progress = computed(() => this.doneStages() / DAY_STAGES.length);
   current = this.day.current;
   isBefore(id: DayStage) { const c = this.current(); return !!c && DAY_STAGES.findIndex((s) => s.id === id) < DAY_STAGES.findIndex((s) => s.id === c); }
@@ -303,6 +382,8 @@ export default class UnitPage {
     this.rev.update((x) => x + 1);
     await this.ui.toast(this.outbox.online() ? 'Sent to the situation room' : 'Saved on phone. It will send when there is signal.');
   }
+  /** The +/- buttons start from the last number sent, so the agent only nudges it */
+  step(by: number) { const cur = this.draft['acc'] ?? this.latest().accredited ?? 0; this.setDraft('acc', Math.max(0, cur + by)); }
   accreditationLog() { return [...this.figs.accreditationUpdates()].reverse(); }
 
   // ---- summaries on the stage headers ----

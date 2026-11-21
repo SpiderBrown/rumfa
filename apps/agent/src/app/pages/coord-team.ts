@@ -12,7 +12,7 @@ import { Ui } from '../core/ui';
   imports: [FormsModule, IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonListHeader,
     IonSelect, IonSelectOption, IonTitle, IonToolbar],
   template: `
-  <ion-header><ion-toolbar color="primary"><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
+  <ion-header><ion-toolbar><ion-buttons slot="start"><ion-back-button defaultHref="/" /></ion-buttons>
     <ion-title>{{ t('My team') }}</ion-title></ion-toolbar></ion-header>
   <ion-content>
     <ion-list>

@@ -7,6 +7,16 @@ import { elections } from '../common/fn';
 import { ROOM } from './roles';
 import { spreadAround, spreadInside, type Spot } from './approx-places';
 
+/** The middle of the units already placed (by their location or their agents' check-ins), and a radius that holds them all */
+function fromCheckins(rows: { lat: number | null; lng: number | null }[]): Spot | null {
+  const pts = rows.filter((r) => r.lat != null && r.lng != null).map((r) => ({ lat: Number(r.lat), lng: Number(r.lng) }));
+  if (!pts.length) return null;
+  const lat = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng = pts.reduce((a, p) => a + p.lng, 0) / pts.length;
+  const cos = Math.cos((lat * Math.PI) / 180);
+  const far = Math.max(...pts.map((p) => Math.hypot((p.lat - lat) * 111_320, (p.lng - lng) * 111_320 * cos)));
+  return { lat, lng, radius_m: Math.round(Math.max(700, far + 400)) };
+}
+
 /** Open case statuses shown on the map. */
 const OPEN = ['queued', 'assigned', 'in_progress', 'escalated'];
 
@@ -199,7 +209,9 @@ export class MapController {
 
     // Wards and units with no outline or location yet get rough places inside their parent, so every one can be
     // seen and opened (shown as dashed circles, marked approximate). A ward with no outline gets one too.
-    const approxArea = len === 12 && !shape ? await this.wardSpot(parent) : null;
+    // A ward with no outline: a dashed circle around where its agents checked in (units share school compounds, so
+    // this only needs to be roughly right); with no check-ins yet, a rough place inside its LGA
+    const approxArea = len === 12 && !shape ? (fromCheckins(rows) ?? await this.wardSpot(parent)) : null;
     if (len === 8 || len === 12) {
       const missing = rows.filter((r) => !r.shape && (r.lat == null || r.lng == null));
       const spots = shape?.geometry ? spreadInside(shape.geometry, missing.length) : approxArea ? spreadAround(approxArea, missing.length) : [];

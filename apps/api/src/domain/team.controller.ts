@@ -1,7 +1,7 @@
 // My field team: who in an area needs following up right now (not checked in, silent, no turnout update, asked
 // for a call, phone trouble), the sub-areas with their coordinators, and announcements to the team. For
 // coordinators and room staff, within their own area.
-import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
@@ -173,6 +173,51 @@ export class TeamController {
     if (ch) await this.db.system(`insert into public.messages (tenant_id, channel_id, sender_id, kind, body) values ($1, $2, $3, 'text', $4)`,
       [u.tid, ch.id, u.mid, d.text.trim()]);
     return { sent: people.length, sms: sms.length, chat: !!ch };
+  }
+
+  /**
+   * One person's work so far today, for their coordinator (or the room): where they are in the day, and a timeline of
+   * what they did and reported (check-ins, checklist, figures, live count, result, IReV check, reports, call requests).
+   */
+  @Get('person/:id')
+  @ApiOperation({ summary: "One person's day: stage reached, figures, reports, call requests and a timeline" })
+  async person(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    await this.mustBeInArea(u, id);
+    const { live } = await this.db.asUser(u, (q) => elections(q, u.tid));
+    const [p] = await this.db.system(
+      `select v.id, v.full_name, v.phone, v.role, v.level, v.area_code, v.network, v.status, pu.name as unit_name, w.name as ward_name,
+              greatest((select max(d.last_seen_at) from public.auth_devices d where d.identity_id = v.user_id),
+                       (select st.updated_at from public.staff_status st where st.volunteer_id = v.id)) as last_seen
+         from public.volunteers v left join public.polling_units pu on pu.code = v.area_code left join public.wards w on w.code = left(v.area_code, 8)
+        where v.id = $1 and v.tenant_id = $2`, [id, u.tid]);
+    if (!p) throw new NotFoundException();
+    if (!live) return { person: p, day: null, timeline: [] };
+    const args = [live, id];
+    const [day] = await this.db.system(
+      `select (select min(at) from public.checkins where election_id = $1 and volunteer_id = $2) as checked_in_at,
+              (select count(*)::int from public.checklist_responses where election_id = $1 and volunteer_id = $2) as answers,
+              (select max(reported_at) from public.unit_figure_updates where election_id = $1 and volunteer_id = $2 and figures ? 'accredited') as last_accreditation,
+              (select (figures->>'accredited')::int from public.unit_figure_updates where election_id = $1 and volunteer_id = $2 and figures ? 'accredited' order by reported_at desc limit 1) as accredited,
+              (select json_build_object('total', total, 'status', status, 'finished_at', finished_at) from public.live_counts where election_id = $1 and volunteer_id = $2 order by updated_at desc limit 1) as live_count,
+              (select json_build_object('at', submitted_at, 'status', status, 'total_valid', total_valid) from public.result_submissions where election_id = $1 and volunteer_id = $2 order by version desc limit 1) as result,
+              (select json_build_object('status', status, 'at', coalesce(answered_at, asked_at)) from public.irev_unit_checks where election_id = $1 and volunteer_id = $2 order by asked_at desc limit 1) as irev,
+              (select count(*)::int from public.incidents where election_id = $1 and volunteer_id = $2) as reports`, args);
+    const timeline = await this.db.system(
+      `select * from (
+         select at, 'checkin' as kind, case when inside is false then 'Checked in outside their area' else 'Checked in' end as text, null::text as detail from public.checkins where election_id = $1 and volunteer_id = $2
+         union all select max(at), 'checklist', count(*) || ' checklist answers', null from public.checklist_responses where election_id = $1 and volunteer_id = $2 having count(*) > 0
+         union all select reported_at, 'figures', case stage when 'accreditation' then 'Accredited so far: ' || (figures->>'accredited') else 'Sent ' || stage || ' figures' end, null
+           from public.unit_figure_updates where election_id = $1 and volunteer_id = $2
+         union all select coalesce(finished_at, started_at), 'count', case when finished_at is null then 'Started the live count' else 'Finished the live count: ' || total || ' ballots' end, null
+           from public.live_counts where election_id = $1 and volunteer_id = $2
+         union all select submitted_at, 'result', 'Sent the result' || case when version > 1 then ' (correction ' || version || ')' else '' end, status from public.result_submissions where election_id = $1 and volunteer_id = $2
+         union all select answered_at, 'irev', case status when 'matches' then 'IReV matches their sheet' else 'IReV is different from their sheet' end, note
+           from public.irev_unit_checks where election_id = $1 and volunteer_id = $2 and answered_at is not null
+         union all select i.reported_at, case when i.is_sos then 'sos' else 'report' end, case when i.is_sos then 'SOS' else coalesce(c.label, i.category) end, i.description
+           from public.incidents i left join public.incident_categories c on c.code = i.category where i.election_id = $1 and i.volunteer_id = $2
+         union all select created_at, 'callback', 'Asked to be called', coalesce(note, reason) from public.callback_requests where election_id = $1 and requester_id = $2
+       ) t where at is not null order by at desc limit 60`, args);
+    return { person: p, day, timeline };
   }
 
   private check(scope: string, area: string) {

@@ -6,6 +6,7 @@ import { CurrentUser, Public, Roles } from './decorators';
 import type { AuthUser } from './auth.types';
 import { TokensService } from './tokens.service';
 import {
+  PinChangeDto,
   AcceptInviteDto, ActivationRequestDto, ActivationVerifyDto, PinLoginDto, RefreshDto, SelectTenantDto,
   StaffLoginDto, SupportTicketDto, SwitchTenantDto,
 } from './dto';
@@ -32,6 +33,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Daily sign-in: phone + PIN on an activated phone' })
   pin(@Body() dto: PinLoginDto, @Ip() ip: string) {
     return this.auth.pinLogin(dto, ip);
+  }
+
+  @ApiBearerAuth() @Post('pin/change') @HttpCode(204) @Throttle({ default: { limit: 5, ttl: 600_000 } })
+  @ApiOperation({ summary: 'Change my PIN (needs the current one)' })
+  async changePin(@CurrentUser() user: AuthUser, @Body() dto: PinChangeDto) {
+    await this.auth.changePin(user, dto.current, dto.pin);
   }
 
   @Public() @Post('select-tenant') @HttpCode(200)

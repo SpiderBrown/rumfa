@@ -44,7 +44,9 @@ export class ContextController {
       `select v.id, v.full_name, v.level, v.area_code from public.volunteers v
         where v.tenant_id = $1 and v.role = 'coordinator' and v.status = 'active' and v.id <> $2
           and $3 like v.area_code || '%' and v.deputy_of is null
-        order by length(v.area_code) desc, v.full_name limit 1`, [user.tid, user.mid, user.area ?? '']);
+          -- A coordinator's coordinator is the one above them, never someone at their own level
+          and ($4::text <> 'coordinator' or length(v.area_code) < length($3))
+        order by length(v.area_code) desc, v.full_name limit 1`, [user.tid, user.mid, user.area ?? '', user.role]);
     return c ?? null;
   }
 
@@ -63,7 +65,10 @@ export class ContextController {
       // Colours set on Rumfa Console's Parties page (others get an automatic colour)
       const colours = await q(`select acronym, colour from public.parties where colour is not null`);
       const partyColours = Object.fromEntries(colours.map((c) => [c.acronym, c.colour]));
-      return { me, elections: el, parties, partyColours, categories, staffStatus: status?.status ?? null };
+      // For the top bar: "Live · Governorship 2027"
+      const [liveElection] = el.live ? await this.db.system(
+        `select name, election_type, status, to_char(election_date, 'YYYY-MM-DD') as election_date from public.elections where id = $1`, [el.live]) : [];
+      return { me, elections: el, liveElection: liveElection ?? null, parties, partyColours, categories, staffStatus: status?.status ?? null };
     }).then(async (ctx) => {
       const settings = await tenantSettings(this.db, user.tid);
       const own = ownParty(settings);

@@ -25,6 +25,7 @@ export function render(t: string, d: Record<string, any>, brand = DEFAULT_BRAND)
     case 'case_updated': return { title: 'Case updated', body: `${d.reports} reports${d.severity_raised ? ', severity raised' : ''}` };
     case 'case_resolved': return { title: 'Your report was resolved', body: d.outcome ?? '' };
     case 'case_task': return { title: 'Task from the situation room', body: d.body };
+    case 'field_task': return { title: d.title ?? 'New task', body: d.body ?? '' };
     case 'case_task_sms': return { title: b, body: `${b} situation room: ${d.body}` };
     case 'case_escalated': return { title: 'Case moved up to you', body: `${d.title ?? 'A case'} was escalated. It needs a supervisor.` };
     case 'case_overdue': return { title: 'Case past its deadline', body: `${d.title ?? 'A case'} has not been resolved in time. It stays in your queue.` };
@@ -35,6 +36,8 @@ export function render(t: string, d: Record<string, any>, brand = DEFAULT_BRAND)
     case 'callback_request_sms': return { title: b, body: `${b}: ${d.name ?? 'An agent'} ${d.phone ?? ''} asked you to call back (${REASON[d.reason] ?? 'help'}). Open the app to call.` };
     case 'callback_missed': return { title: b, body: `${b}: we could not reach you. Please request a call again in the app or call your coordinator.` };
     case 'callback_missed_retry': return { title: b, body: `${b}: your coordinator tried to call you. They will try again in ${d.minutes ?? 5} minutes.` };
+    case 'full_photo_request': return { title: 'Your sheet photo is needed', body: 'The situation room needs the full photo of your result sheet. Open the app on Wi-Fi or data to send it.' };
+    case 'irev_check': return { title: d.replaced ? 'IReV sheet replaced' : 'Your result is on IReV', body: `${d.replaced ? 'INEC changed the sheet for' : 'INEC uploaded the sheet for'} your polling unit. Check it against the sheet you signed.` };
     case 'app_call': return { title: 'Incoming call', body: `${d.name || 'Someone'} is calling you in the app. Open it to answer.` };
     case 'live_view_request': return { title: 'Live view request', body: 'The situation room asks to see your unit. Open the app to accept.' };
     case 'contact_call_failed': return { title: 'Contact unreachable', body: 'A verified contact did not answer a test call.' };

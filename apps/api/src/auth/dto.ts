@@ -51,3 +51,8 @@ export class AcceptInviteDto {
 export class SupportTicketDto {
   @ApiProperty() @IsString() @MaxLength(200) ticket: string;
 }
+
+export class PinChangeDto {
+  @ApiProperty({ description: 'The PIN in use now' }) @Matches(/^\d{6}$/) current: string;
+  @ApiProperty({ description: 'The new 6-digit PIN' }) @Matches(/^\d{6}$/) pin: string;
+}

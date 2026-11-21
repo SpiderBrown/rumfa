@@ -85,6 +85,18 @@ describe('Sign-in and tenant isolation (e2e)', () => {
     await http.post(api('/auth/select-tenant')).send({ selectToken: pin.body.selectToken, tenantId: 'a3a3a3a3-0000-4000-8000-000000000003' }).expect(403);
   });
 
+  it('change PIN: needs the current one; the new one signs in, the old one no longer does', async () => {
+    const s = (await http.post(api('/auth/pin')).send({ phone: agentPhone, pin: '482916', ...device, tenantId: TENANT_A }).expect(200)).body.session;
+    const auth = { Authorization: `Bearer ${s.accessToken}` };
+    await http.post(api('/auth/pin/change')).set(auth).send({ current: '111111', pin: '730519' }).expect(400);
+    await http.post(api('/auth/pin/change')).set(auth).send({ current: '482916', pin: '482916' }).expect(400);
+    await http.post(api('/auth/pin/change')).set(auth).send({ current: '482916', pin: '730519' }).expect(204);
+    await http.post(api('/auth/pin')).send({ phone: agentPhone, pin: '482916', ...device, tenantId: TENANT_A }).expect(401);
+    await http.post(api('/auth/pin')).send({ phone: agentPhone, pin: '730519', ...device, tenantId: TENANT_A }).expect(200);
+    // Back to the PIN the next tests use
+    await http.post(api('/auth/pin/change')).set(auth).send({ current: '730519', pin: '482916' }).expect(204);
+  });
+
   it('refresh tokens rotate, and a reused one ends the session', async () => {
     const s = (await http.post(api('/auth/pin')).send({ phone: agentPhone, pin: '482916', ...device, tenantId: TENANT_A }).expect(200)).body.session;
     const r1 = await http.post(api('/auth/refresh')).send({ refreshToken: s.refreshToken }).expect(200);

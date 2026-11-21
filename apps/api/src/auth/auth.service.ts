@@ -275,6 +275,14 @@ export class AuthService {
     return v;
   }
 
+  /** A new PIN for every phone this person uses (the current one is checked first) */
+  async changePin(user: AuthUser, current: string, pin: string) {
+    if (current === pin) throw new BadRequestException('The new PIN is the same as the old one');
+    const [idn] = await this.db.system(`select pin_hash from public.identities where id = $1`, [user.sub]);
+    if (!idn?.pin_hash || !(await bcrypt.compare(current, idn.pin_hash))) throw new BadRequestException('The current PIN is wrong');
+    await this.db.system(`update public.identities set pin_hash = $2 where id = $1`, [user.sub, await bcrypt.hash(pin, 10)]);
+  }
+
   async issueActivationCode(user: AuthUser, volunteerId: string) {
     const v = await this.manageable(user, volunteerId);
     if (!FIELD_ROLES.includes(v.role)) throw new BadRequestException('Dashboard staff sign in with email and password');

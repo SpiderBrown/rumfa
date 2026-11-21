@@ -239,6 +239,44 @@ describe('API endpoints and webhooks (e2e)', () => {
     expect((await http.get(api('/callbacks/mine')).set(as(AGENT4)).expect(200)).body).toEqual({});
   });
 
+  it('tasks: a report from the team becomes a task for the ward coordinator, who follows it up; agents see only their own', async () => {
+    const rep = await http.post(api('/incidents')).set(as(AGENT4))
+      .send({ pu: '19-28-02-004', category: 'vote_buying', description: 'Cash at the queue', clientId: uuid() }).expect(200);
+    const mine = (await http.get(api('/tasks/mine')).set(as(WARD)).expect(200)).body;
+    const task = mine.find((t: any) => t.case_id === rep.body.case_id);
+    expect(task).toMatchObject({ kind: 'team_report', status: 'open', pu_code: '19-28-02-004', about: { id: AGENT4 } });
+    expect(task.seen_at).toBeNull();
+    // Opening marks it seen; status and notes are kept, and logged on the case for the room
+    expect((await http.get(api(`/tasks/${task.id}`)).set(as(WARD)).expect(200)).body.seen_at).not.toBeNull();
+    const onWay = (await http.post(api(`/tasks/${task.id}/status`)).set(as(WARD)).send({ status: 'on_way', note: "I'm going to the PU" }).expect(200)).body;
+    expect(onWay).toMatchObject({ status: 'on_way' });
+    expect(onWay.on_way_at).not.toBeNull();
+    await http.post(api(`/tasks/${task.id}/notes`)).set(as(WARD)).send({ body: 'Agent not reachable' }).expect(200);
+    const events = await ds.query(`select body from public.case_events where case_id = $1 and kind = 'note' order by at`, [rep.body.case_id]);
+    expect(events.map((e: any) => e.body)).toEqual(expect.arrayContaining(["Task: On my way (I'm going to the PU)", 'Task note: Agent not reachable']));
+    // Someone else's task: not found; agents have no tasks here
+    await http.get(api(`/tasks/${task.id}`)).set(as(AGENT4)).expect(404);
+    expect((await http.get(api('/tasks/mine')).set(as(AGENT4)).expect(200)).body).toEqual([]);
+    // The room resolves the case: the task clears by itself, with the reason
+    await ds.query(`update public.cases set status = 'resolved', resolved_at = now() where id = $1`, [rep.body.case_id]);
+    const after = (await http.get(api(`/tasks/${task.id}`)).set(as(WARD)).expect(200)).body;
+    expect(after).toMatchObject({ status: 'cleared', cleared_reason: 'The situation room resolved the case' });
+  });
+
+  it('tasks: an agent not checked in once voting starts becomes a task, cleared when they check in', async () => {
+    const [a] = await ds.query(`select tenant_id, area_code from public.volunteers where id = $1`, [AGENT4]);
+    const [{ id }] = await ds.query(`select app.open_field_task($1, $2, $3, 'not_checked_in', 'Agent 004 has not checked in', null, 'high', $4, $5, null, null, $6) as id`,
+      [a.tenant_id, LIVE, WARD, AGENT4, a.area_code, `checkin:e2e:${uuid()}`]);
+    expect((await http.get(api(`/tasks/${id}`)).set(as(WARD)).expect(200)).body.status).toBe('open');
+    const ck = uuid();
+    await ds.query(`insert into public.checkins (tenant_id, election_id, volunteer_id, pu_code, at, client_id) values ($1, $2, $3, $4, now(), $5)`,
+      [a.tenant_id, LIVE, AGENT4, a.area_code, ck]);
+    const t = (await http.get(api(`/tasks/${id}`)).set(as(WARD)).expect(200)).body;
+    expect(t).toMatchObject({ status: 'cleared', cleared_reason: 'The agent checked in' });
+    expect(t.notes.at(-1)).toMatchObject({ kind: 'auto', body: 'The agent checked in' });
+    await ds.query(`delete from public.checkins where client_id = $1`, [ck]);   // later tests count this agent's check-ins
+  });
+
   it('coordinator adds an agent in their ward (with a fresh agent code), not elsewhere', async () => {
     const r = await http.post(api('/people')).set(as(WARD)).send({ fullName: 'New Agent', phone: '0803 000 0055', role: 'agent', level: 'pu', areaCode: '19-28-02-005' }).expect(201);
     expect(r.body.agent_code).toMatch(/^[2-9A-Z]{4}$/);
@@ -632,7 +670,7 @@ describe('API endpoints and webhooks (e2e)', () => {
     await http.get(api('/topups/plans')).set(as(ADMIN)).expect(403);
     await http.get(api('/voice/campaigns')).set(as(ADMIN)).expect(403);
     const ctx = (await http.get(api('/me/context')).set(as(ADMIN)).expect(200)).body;
-    expect(ctx.addons).toEqual({ voice: false, airtime: false });
+    expect(ctx.addons).toMatchObject({ voice: false, airtime: false });
     await ds.query(`update public.tenants set settings = settings || '{"addons":{"airtime":true}}' where id = (select tenant_id from public.volunteers where id = $1)`, [ADMIN]);
     const plan = await http.post(api('/topups/plans')).set(as(ADMIN)).send({ name: 'Election day airtime', kind: 'airtime', amountNgn: 500, targetRoles: ['agent'] }).expect(201);
     const b = await http.post(api('/topups/batches')).set(as(ADMIN)).send({ planId: plan.body.id }).expect(201);
@@ -786,5 +824,273 @@ describe('API endpoints and webhooks (e2e)', () => {
     await ds.query(`update public.tenants set seat = null, seat_area = null where id = $1`, [T_A]);
     await ds.query(`update public.cases set status = 'closed', closed_at = now() where id = $1`, [id]);
     expect((await http.get(api('/channels/area')).set(as(AGENT3)).expect(200)).body.map((x: any) => x.kind).sort()).toEqual(['lga', 'state', 'ward']);
+  });
+  it('shifts and auto-assign are optional: without shifts a queue is everyone whose role fits; without auto-assign cases wait', async () => {
+    const setStaffing = (v: object) => ds.query(`update public.tenants set settings = jsonb_set(settings, '{rules}', $2::jsonb) where id = $1`, [T_A, JSON.stringify({ staffing: v })]);
+    await ds.query(`insert into public.staff_status (volunteer_id, tenant_id, status) values ($1, $3, 'available'), ($2, $3, 'available')
+                    on conflict (volunteer_id) do update set status = 'available'`, [OP_EN, OP_HA, T_A]);
+    await ds.query(`update public.shifts set ends_at = starts_at + interval '1 second' where tenant_id = $1 and now() between starts_at and ends_at`, [T_A]);
+
+    // No shifts: an operator covering Kano gets a Kano room case (both speak the reporter's English)
+    await setStaffing({ useShifts: false, autoAssign: true });
+    const a = (await http.post(api('/incidents')).set(as(AGENT4)).send({ pu: '19-28-02-004', category: 'bvas_failure', clientId: uuid() }).expect(200)).body.case_id;
+    const [ca] = await ds.query(`select assigned_to, q.kind from public.cases c join public.queues q on q.id = c.queue_id where c.id = $1`, [a]);
+    expect(ca.kind).toBe('state');
+    expect([OP_EN, OP_HA]).toContain(ca.assigned_to);
+    const staff = (await http.get(api('/people/room-staff')).set(as(SUP)).expect(200)).body;
+    const en = staff.find((x: any) => x.id === OP_EN);
+    expect(en.on_shift).toBe(false);
+    expect(en.queues.length).toBeGreaterThan(0);          // the Kano room and the helpdesk, by role
+
+    // No auto-assign: the case waits; the operator takes it with Take next (no queue: across their own queues)
+    await setStaffing({ useShifts: false, autoAssign: false });
+    const b = (await http.post(api('/incidents')).set(as(AGENT3)).send({ pu: '19-28-02-003', category: 'voters_turned_away', clientId: uuid() }).expect(200)).body.case_id;
+    const [cb] = await ds.query(`select assigned_to, status from public.cases where id = $1`, [b]);
+    expect(cb).toEqual({ assigned_to: null, status: 'queued' });
+    const [sec] = await ds.query(`select id from public.queues where tenant_id = $1 and kind = 'security'`, [T_A]);
+    const other = await http.post(api('/cases/next')).set(as(OP_EN)).send({ queueId: sec.id });
+    expect(other.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(other.body)).toContain('another team');
+    expect((await http.post(api('/cases/next')).set(as(OP_EN)).send({}).expect(200)).body.caseId).toBe(b);
+
+    await ds.query(`update public.tenants set settings = settings - 'rules' where id = $1`, [T_A]);
+    await ds.query(`update public.shifts set ends_at = now() + interval '12 hours' where tenant_id = $1 and ends_at = starts_at + interval '1 second'`, [T_A]);
+    await ds.query(`update public.cases set status = 'closed', closed_at = now() where id = any($1)`, [[a, b]]);
+  });
+
+  it('import list: every line is checked first, then new people are added as invited; people already here are left alone', async () => {
+    const bad = 'full_name,phone,role,level,area_code\nAmina Bala,0803 999 0001,agent,pu,19-28-02-003\nNo Phone,,agent,pu,19-28-02-003\nGhost,08039990003,agent,pu,99-99-99-999';
+    const r1 = (await http.post(api('/people/import')).set(as(ADMIN)).send({ csv: bad, dryRun: false }).expect(200)).body;
+    expect(r1.added).toBe(0);
+    expect(r1.problems).toEqual(expect.arrayContaining([expect.stringContaining('Line 3'), expect.stringContaining("99-99-99-999 doesn't exist")]));
+    await http.post(api('/people/import')).set(as(SUP)).send({ csv: bad }).expect(403);
+
+    const good = 'full_name,phone,role,level,area_code,languages\nAmina Bala,0803 999 0001,agent,pu,19-28-02-003,ha;en\nAgent 003 again,+2348000000020,agent,pu,19-28-02-003,';
+    expect((await http.post(api('/people/import')).set(as(ADMIN)).send({ csv: good, dryRun: true }).expect(200)).body).toMatchObject({ valid: 2, already: 1, added: 0, problemCount: 0 });
+    expect((await http.post(api('/people/import')).set(as(ADMIN)).send({ csv: good }).expect(200)).body).toMatchObject({ added: 1, already: 1 });
+    const [p] = await ds.query(`select status, languages, agent_code is not null as coded from public.volunteers where tenant_id = $1 and phone = '+2348039990001'`, [T_A]);
+    expect(p).toEqual({ status: 'invited', languages: ['ha', 'en'], coded: true });
+    const list = (await http.get(api('/people')).set(as(ADMIN)).expect(200)).body;
+    const agent = list.find((x: any) => x.phone === '+2348000000020');
+    expect(agent.where).toMatchObject({ code: '19-28-02-003' });
+    expect(agent).toHaveProperty('last_seen');
+    expect(agent).not.toHaveProperty('user_id');
+    await ds.query(`delete from public.volunteers where tenant_id = $1 and phone = '+2348039990001'`, [T_A]);
+  });
+  it('group call: rings everyone of the chosen roles in an area into one room; phones only after the caller asks, when set up', async () => {
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ inapp: true }).expect(200);
+    // Who: coordinators in the LGA (the ward coordinator, the deputy and the LGA coordinator); agents can't start one
+    const pre = (await http.post(api('/calls/group/preview')).set(as(SUP)).send({ area: '19-28', roles: ['coordinator'] }).expect(200)).body;
+    expect(pre.people.map((p: any) => p.role)).toEqual(expect.arrayContaining(['coordinator']));
+    expect(pre.people.every((p: any) => p.role === 'coordinator' && p.area_code.startsWith('19-28'))).toBe(true);
+    await http.post(api('/calls/group/preview')).set(as(AGENT3)).send({ area: '19-28', roles: ['coordinator'] }).expect(403);
+    await http.post(api('/calls/group/preview')).set(as(WARD)).send({ area: '19-30', roles: ['agent'] }).expect(403);   // outside their ward
+
+    const g = (await http.post(api('/calls/group')).set(as(SUP)).send({ area: '19-28-02', roles: ['agent'], title: 'Agents in the ward' }).expect(200)).body;
+    expect(g).toMatchObject({ url: 'wss://livekit.test', canPhone: false });
+    const legs = await ds.query(`select id, callee_id, status from public.calls where group_id = $1`, [g.groupId]);
+    expect(legs.map((l: any) => l.callee_id).sort()).toEqual([AGENT3, AGENT4].sort());
+    // The agent sees it as an incoming app call and answers into the group's room
+    const leg3 = legs.find((l: any) => l.callee_id === AGENT3);
+    expect((await http.get(api('/calls/app/incoming')).set(as(AGENT3)).expect(200)).body.map((c: any) => c.id)).toContain(leg3.id);
+    const ans = (await http.post(api(`/calls/app/${leg3.id}/answer`)).set(as(AGENT3)).expect(200)).body;
+    expect(ans.group).toBe(true);
+    const payload = JSON.parse(Buffer.from(ans.token.split('.')[1], 'base64url').toString());
+    expect(payload.video.room).toBe(`group-${g.groupId}`);
+
+    const st = (await http.get(api(`/calls/group/${g.groupId}`)).set(as(SUP)).expect(200)).body;
+    expect(st.people.find((p: any) => p.id === AGENT3).app).toBe('answered');
+    expect(st.people.find((p: any) => p.id === AGENT4).app).toBe('ringing');
+    // Phoning needs Africa's Talking voice and LiveKit SIP: not set up in tests, so it says so and rings nobody
+    const ph = await http.post(api(`/calls/group/${g.groupId}/phone`)).set(as(SUP)).send({ people: [AGENT4] });
+    expect(ph.status).toBe(503);
+    expect(ph.body.message).toContain('LIVEKIT_SIP_DIAL');
+
+    expect((await http.post(api(`/calls/group/${g.groupId}/end`)).set(as(SUP)).expect(200)).body.status).toBe('ended');
+    const after = await ds.query(`select callee_id, status from public.calls where group_id = $1 order by callee_id`, [g.groupId]);
+    expect(Object.fromEntries(after.map((a: any) => [a.callee_id, a.status]))).toEqual({ [AGENT3]: 'completed', [AGENT4]: 'no_answer' });
+    await http.patch(api('/settings/calls')).set(as(ADMIN)).send({ inapp: false }).expect(200);
+  });
+  it('results by area: each sub-area with our sheets, IReV, matches and differences, down to the polling unit', async () => {
+    const ng = (await http.get(api('/results/by-area')).query({ election: LIVE }).set(as(ADMIN)).expect(200)).body;
+    const kano = ng.find((r: any) => r.code === '19');
+    expect(kano).toMatchObject({ name: expect.any(String), units: expect.any(Number) });
+    expect(kano.units).toBeGreaterThan(0);
+    const lga = (await http.get(api('/results/by-area')).query({ election: LIVE, area: '19' }).set(as(ADMIN)).expect(200)).body;
+    expect(lga.every((r: any) => /^19-\d{2}$/.test(r.code))).toBe(true);
+    const units = (await http.get(api('/results/by-area')).query({ election: LIVE, area: '19-28-02' }).set(as(ADMIN)).expect(200)).body;
+    expect(units.every((r: any) => /^19-28-02-\d{3}$/.test(r.code))).toBe(true);
+    for (const r of units) expect(typeof r.our_votes).toBe('object');
+    await http.get(api('/results/by-area')).query({ election: LIVE }).set(as(AGENT3)).expect(403);
+  });
+  it('agents check IReV: asked when the sheet is published; "matches" verifies the unit, "different" opens a legal case', async () => {
+    const PU = '19-28-02-003';
+    await ds.query(`delete from public.irev_unit_checks where pu_code = $1`, [PU]);
+    await ds.query(`delete from public.outbox where template = 'irev_check'`);
+    // The agent has sent a result
+    await http.post(api('/results')).set(as(AGENT3)).send({ pu: PU, registered: 500, accredited: 300, rejected: 5, totalValid: 295,
+      votes: { APC: 150, PDP: 145 }, clientId: uuid() }).expect(200);
+    // INEC publishes the unit's sheet: the agent is asked
+    await ds.query(`insert into public.irev_availability (election_id, pu_code, status, first_seen_at, irev_updated_at, sheet_url)
+                    values ($1, $2, 'on_irev', now(), now(), 'https://example.org/s.pdf')
+                    on conflict (election_id, pu_code) do update set status = 'on_irev', irev_updated_at = now(), sheet_url = excluded.sheet_url`, [LIVE, PU]);
+    const [push] = await ds.query(`select to_volunteer, data from public.outbox where template = 'irev_check'`);
+    expect(push).toMatchObject({ to_volunteer: AGENT3, data: { pu: PU } });
+    let mine = (await http.get(api('/irev-checks/mine')).set(as(AGENT3)).expect(200)).body;
+    expect(mine[0]).toMatchObject({ pu_code: PU, status: 'asked', mine: { total_valid: 295 } });
+    // Their own unit's sheet is theirs to open; another unit's isn't
+    const own = await http.post(api('/media/view-url')).set(as(AGENT3)).send({ kind: 'irev', electionId: LIVE, pu: PU });
+    expect(own.status).toBe(200);
+    expect(own.body.source).toBe('inec');
+    await http.post(api('/media/view-url')).set(as(AGENT3)).send({ kind: 'irev', electionId: LIVE, pu: '19-28-02-004' }).expect(403);
+
+    // It matches: verified for the client, nothing for the room to type
+    await http.post(api(`/irev-checks/${mine[0].id}`)).set(as(AGENT4)).send({ matches: true }).expect((r) => expect(r.status).toBeGreaterThanOrEqual(400));
+    expect((await http.post(api(`/irev-checks/${mine[0].id}`)).set(as(AGENT3)).send({ matches: true }).expect(200)).body.caseId).toBeNull();
+    const [v] = await ds.query(`select status from public.verifications where tenant_id = $1 and election_id = $2 and pu_code = $3`, [T_A, LIVE, PU]);
+    expect(v.status).toBe('verified');
+
+    // INEC replaces the sheet: asked again; this time it's different, so the legal desk gets a case
+    await ds.query(`update public.irev_availability set status = 'replaced', replaced_count = replaced_count + 1, irev_updated_at = now() + interval '1 minute' where election_id = $1 and pu_code = $2`, [LIVE, PU]);
+    mine = (await http.get(api('/irev-checks/mine')).set(as(AGENT3)).expect(200)).body;
+    expect(mine[0].status).toBe('asked');
+    await http.post(api(`/irev-checks/${mine[0].id}`)).set(as(AGENT3)).send({ matches: false }).expect(400);
+    const caseId = (await http.post(api(`/irev-checks/${mine[0].id}`)).set(as(AGENT3)).send({ matches: false, note: 'APC 150 on mine, 250 on IReV' }).expect(200)).body.caseId;
+    const [c] = await ds.query(`select c.category, q.kind from public.cases c join public.queues q on q.id = c.queue_id where c.id = $1`, [caseId]);
+    expect(c).toEqual({ category: 'irev_mismatch', kind: 'legal' });
+    const d = (await http.get(api(`/cases/${caseId}`)).set(as(SUP)).expect(200)).body;
+    expect(d.alerts[0].details).toMatchObject({ source: 'agent', note: 'APC 150 on mine, 250 on IReV' });
+
+    // Asking Rumfa to look at IReV for my unit: this election has no IReV id yet
+    expect((await http.post(api('/irev/check-mine')).set(as(AGENT3)).expect(200)).body).toMatchObject({ queued: false });
+    await ds.query(`update public.cases set status = 'closed', closed_at = now() where id = $1`, [caseId]);
+    await ds.query(`delete from public.irev_availability where election_id = $1 and pu_code = $2`, [LIVE, PU]);
+  });
+  it('voice messages: recorded once, every agent chosen gets a call that plays it; missed calls are tried again', async () => {
+    const pre = (await http.post(api('/announcements/voice/preview')).set(as(SUP)).send({ area: '19-28-02', roles: ['agent'] }).expect(200)).body;
+    expect(pre.count).toBe(2);
+    await http.post(api('/announcements/voice/preview')).set(as(AGENT3)).send({ area: '19-28-02', roles: ['agent'] }).expect(403);
+    await http.post(api('/announcements/voice')).set(as(SUP)).send({ area: '19-28-02', roles: ['agent'], audioPath: 'elsewhere/x.wav' }).expect(400);
+    const up = (await http.post(api('/media/upload-url')).set(as(SUP)).send({ kind: 'announcement', ext: 'wav' }).expect((r) => expect(r.status).toBeLessThan(300))).body;
+    const sent = (await http.post(api('/announcements/voice')).set(as(SUP)).send({ area: '19-28-02', roles: ['agent'], audioPath: up.path, durationS: 20, title: 'Stay at your unit' }).expect(200)).body;
+    expect(sent.people).toBe(2);
+    const calls = await ds.query(`select id, volunteer_id, status from public.voice_announcement_calls where announcement_id = $1 order by volunteer_id`, [sent.id]);
+    expect(calls.map((c: any) => c.status)).toEqual(['waiting', 'waiting']);
+
+    // The worker rang the first; it's answered: the message plays, then the call ends and counts as heard
+    await ds.query(`update public.voice_announcement_calls set status = 'calling', attempts = 1 where id = $1`, [calls[0].id]);
+    const xml = await http.post(api(`/webhooks/at/voice?key=${KEY}`)).type('form').send({ sessionId: 'ATVid_ann1', isActive: '1', clientRequestId: `ann-${calls[0].id}` }).expect(200);
+    expect(xml.text).toContain('<Play url=');
+    expect(xml.text).toContain('A message from Supervisor Kano');
+    await http.post(api(`/webhooks/at/voice?key=${KEY}`)).type('form').send({ sessionId: 'ATVid_ann1', isActive: '0', durationInSeconds: '25', status: 'Success' }).expect(200);
+    // The second was out of network: not answered, to be tried again
+    await ds.query(`update public.voice_announcement_calls set status = 'calling', attempts = 1, provider_session_id = 'ATVid_ann2' where id = $1`, [calls[1].id]);
+    await http.post(api(`/webhooks/at/voice?key=${KEY}`)).type('form').send({ sessionId: 'ATVid_ann2', isActive: '0', durationInSeconds: '0', status: 'NotAnswered' }).expect(200);
+    const d = (await http.get(api(`/announcements/voice/${sent.id}`)).set(as(SUP)).expect(200)).body;
+    expect(Object.fromEntries(d.people.map((p: any) => [p.id, p.status]))).toEqual({ [calls[0].volunteer_id]: 'heard', [calls[1].volunteer_id]: 'no_answer' });
+    expect((await http.get(api('/announcements/voice')).set(as(SUP)).expect(200)).body[0].counts).toEqual({ heard: 1, no_answer: 1 });
+    // Cancelled: no more tries
+    await http.post(api(`/announcements/voice/${sent.id}/cancel`)).set(as(SUP)).expect(200);
+    const [after] = await ds.query(`select status from public.voice_announcement_calls where id = $1`, [calls[1].id]);
+    expect(after.status).toBe('cancelled');
+  });
+
+  it('search: cases, people and places from the top bar', async () => {
+    const r = (await http.get(api('/search')).query({ q: 'Agent 00' }).set(as(SUP)).expect(200)).body;
+    expect(r.people.map((p: any) => p.full_name)).toEqual(expect.arrayContaining(['Agent 003', 'Agent 004']));
+    const p = (await http.get(api('/search')).query({ q: '19-28-02-003' }).set(as(SUP)).expect(200)).body;
+    expect(p.places[0]).toMatchObject({ code: '19-28-02-003', level: 'pu' });
+    await http.get(api('/search')).query({ q: 'Agent' }).set(as(AGENT3)).expect(403);
+    expect((await http.get(api('/me/context')).set(as(SUP)).expect(200)).body.liveElection).toMatchObject({ name: expect.any(String) });
+  });
+  it('results: zones and senatorial districts; one unit compared; the full sheet photo asked for and sent', async () => {
+    const zones = (await http.get(api('/results/by-area')).query({ election: LIVE, group: 'zone' }).set(as(ADMIN)).expect(200)).body;
+    expect(zones.every((r: any) => /^Z-(NC|NE|NW|SE|SS|SW)$/.test(r.code))).toBe(true);
+    const nw = zones.find((r: any) => r.code === 'Z-NW');
+    expect(nw.name).toBe('North West');
+    const nwStates = (await http.get(api('/results/by-area')).query({ election: LIVE, area: 'Z-NW' }).set(as(ADMIN)).expect(200)).body;
+    expect(nwStates.map((r: any) => r.code)).toContain('19');
+    expect(nwStates.reduce((n: number, r: any) => n + r.units, 0)).toBe(nw.units);
+    await http.get(api('/results/by-area')).query({ election: LIVE, area: '19', group: 'senatorial' }).set(as(ADMIN)).expect(200);
+
+    // One unit, both sides: our agent's sheet (sent from the app, so it has a client id)
+    const PU = '19-28-02-003';
+    await http.post(api('/results')).set(as(AGENT3)).send({ pu: PU, registered: 500, accredited: 300, rejected: 5, totalValid: 295,
+      votes: { APC: 150, PDP: 145 }, photoPath: `${T_A}/ec8a/${PU}/light.jpg`, clientId: uuid() }).expect(200);
+    const u = (await http.get(api('/results/unit')).query({ election: LIVE, pu: PU }).set(as(ADMIN)).expect(200)).body;
+    expect(u.ours).toMatchObject({ total_valid: expect.any(Number), has_full: false });
+    // The room asks for the full photo; the agent's app finds the request and sends it
+    await http.post(api(`/results/${u.ours.id}/request-full-photo`)).set(as(SUP)).expect(204);
+    await http.post(api(`/results/${u.ours.id}/request-full-photo`)).set(as(AGENT3)).expect(403);
+    const asked = (await http.get(api('/results/full-photo-requests')).set(as(AGENT3)).expect(200)).body;
+    {
+      expect(asked.map((a: any) => a.id)).toContain(u.ours.id);
+      const [push] = await ds.query(`select template from public.outbox where to_volunteer = $1 and template = 'full_photo_request'`, [AGENT3]);
+      expect(push).toBeTruthy();
+      await http.post(api(`/results/${u.ours.id}/full-photo`)).set(as(AGENT3)).send({ path: 'elsewhere/x.jpg' }).expect(400);
+      await http.post(api(`/results/${u.ours.id}/full-photo`)).set(as(AGENT3)).send({ path: `${T_A}/ec8a/${PU}/full.jpg` }).expect(204);
+      expect((await http.get(api('/results/unit')).query({ election: LIVE, pu: PU }).set(as(ADMIN)).expect(200)).body.ours.has_full).toBe(true);
+      expect((await http.get(api('/results/full-photo-requests')).set(as(AGENT3)).expect(200)).body).toEqual([]);
+    }
+  });
+  it('IReV from the dashboard: an LGA or ward at a time, once, never repeated within 10 minutes; automatic rechecks only around election day', async () => {
+    const job = (b: object) => http.post(api('/irev/jobs')).set(as(ADMIN)).send({ electionId: LIVE, jobType: 'live', keep: 'link', ...b });
+    await job({ areaLevel: 'national', areaCode: 'NG' }).expect(400);
+    await job({ areaLevel: 'state', areaCode: '19' }).expect(400);
+    const first = (await job({ areaLevel: 'ward', areaCode: '19-28-02', autoRecheck: true }).expect(201)).body;
+    expect(first.auto_recheck).toBe(false);
+    expect((await job({ areaLevel: 'ward', areaCode: '19-28-02' })).status).toBe(409);       // being checked
+    expect((await job({ areaLevel: 'lga', areaCode: '19-28' })).status).toBe(409);           // covers that ward
+    await ds.query(`update public.irev_fetch_jobs set status = 'done', created_at = now() - interval '5 minutes' where id = $1`, [first.id]);
+    expect((await job({ areaLevel: 'ward', areaCode: '19-28-02' })).status).toBe(409);       // checked 5 minutes ago
+    await ds.query(`update public.irev_fetch_jobs set created_at = now() - interval '11 minutes' where id = $1`, [first.id]);
+    const again = (await job({ areaLevel: 'ward', areaCode: '19-28-02' }).expect(201)).body;
+    await ds.query(`update public.irev_fetch_jobs set status = 'cancelled' where id = $1`, [again.id]);
+
+    // An automatic recheck job waits until election day: the worker doesn't pick it up today
+    const [{ election_date: was }] = await ds.query(`select election_date::text from public.elections where id = $1`, [LIVE]);
+    await ds.query(`update public.elections set election_date = current_date + 30 where id = $1`, [LIVE]);
+    const [auto] = await ds.query(`insert into public.irev_fetch_jobs (election_id, job_type, area_level, area_code, auto_recheck, keep, watcher)
+                                   values ($1, 'live', 'ward', '19-28-02', true, 'link', true) returning id`, [LIVE]);
+    const { setWorkerContext } = await import('../src/worker/context');
+    const { Db } = await import('../src/database/db.service');
+    const { StorageService } = await import('../src/common/storage.service');
+    setWorkerContext({ db: app.get(Db), storage: app.get(StorageService) });
+    const { claimJob } = await import('../src/worker/irev/jobs');
+    const claimed = await claimJob();
+    expect(claimed?.id).not.toBe(auto.id);
+    await ds.query(`update public.irev_fetch_jobs set status = 'cancelled' where election_id = $1 and status in ('queued','running')`, [LIVE]);
+    await ds.query(`update public.elections set election_date = $2 where id = $1`, [LIVE, was]);
+  });
+  it('results by SMS with no data network: one short text, merged with the app copy later (photo and full-photo request work)', async () => {
+    const PU = '19-28-02-004';
+    await ds.query(`delete from public.result_submissions where pu_code = $1`, [PU]);
+    const votes = { APC: 120, PDP: 95, LP: 0, NNPP: 7, ADC: 0 };
+    const sms = encodeResultSms({ puCode: PU, version: 1, agentCode: '7F4', registered: 500, accredited: 230, rejected: 3, totalValid: 222, votes });
+    expect(sms).not.toContain('LP0');                 // zero parties left out
+    expect(sms.length).toBeLessThanOrEqual(160);
+    // The agent has no data: the phone's SMS app sends it
+    await http.post(api(`/webhooks/at/sms?key=${KEY}`)).type('form').send({ from: '+2348000000021', text: sms, id: 'sms-offline-1' }).expect(200);
+    const [r] = await ds.query(`select id, source, votes, client_id from public.result_submissions where pu_code = $1`, [PU]);
+    expect(r.source).toBe('sms');
+    expect(r.votes).toEqual(votes);                   // every ballot party, 0 where left out
+    const [reply] = await ds.query(`select data from public.outbox where to_phone = '+2348000000021' and template = 'raw' order by id desc limit 1`);
+    expect(reply.data.text).toContain(`Result for ${PU} received`);
+
+    // Later, with data, the app sends its copy (same figures, its id and the photo): one result, not two
+    const clientId = uuid();
+    const app2 = (await http.post(api('/results')).set(as(AGENT4)).send({ pu: PU, registered: 500, accredited: 230, rejected: 3, totalValid: 222, votes,
+      photoPath: `${T_A}/ec8a/${PU}/p.jpg`, clientId }).expect(200)).body;
+    expect(app2).toMatchObject({ submission_id: r.id, duplicate: true });
+    const [merged] = await ds.query(`select count(*) over () as n, client_id, sheet_photo_path from public.result_submissions where pu_code = $1`, [PU]);
+    expect(merged).toMatchObject({ n: '1', client_id: clientId, sheet_photo_path: `${T_A}/ec8a/${PU}/p.jpg` });
+    await http.post(api(`/results/${r.id}/request-full-photo`)).set(as(SUP)).expect(204);
+    expect((await http.get(api('/results/full-photo-requests')).set(as(AGENT4)).expect(200)).body.map((x: any) => x.client_id)).toContain(clientId);
+
+    // The same code from another line: not accepted, but the sender is told why
+    await http.post(api(`/webhooks/at/sms?key=${KEY}`)).type('form').send({ from: '+2348099990000', text: sms, id: 'sms-offline-2' }).expect(200);
+    const [other] = await ds.query(`select data from public.outbox where to_phone = '+2348099990000' and template = 'raw'`);
+    expect(other.data.text).toContain('not the one registered');
+    expect((await ds.query(`select count(*)::int as n from public.result_submissions where pu_code = $1`, [PU]))[0].n).toBe(1);
   });
 });

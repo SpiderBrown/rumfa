@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
 import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db, type Query } from '../database/db.service';
+import { StorageService } from '../common/storage.service';
 import { callFn, elections } from '../common/fn';
 import { checkinFence, checkinWindow } from '../common/checkin-window';
 import { judgeCheckin } from '../shared';
@@ -52,6 +53,11 @@ class IncidentDto {
   @ApiProperty() @IsUUID() clientId: string;
 }
 
+class FullPhotoDto { @ApiProperty({ description: 'From POST /media/upload-url (kind ec8a)' }) @IsString() @MaxLength(300) path: string; }
+class IrevAnswerDto {
+  @ApiProperty({ description: 'true: IReV shows the same figures as the signed sheet' }) @IsBoolean() matches: boolean;
+  @ApiPropertyOptional({ description: 'What is different' }) @IsOptional() @IsString() @MaxLength(1000) note?: string;
+}
 class IncidentDetailsDto {
   @ApiProperty({ description: 'The app\'s id for the report (the clientId it was sent with)' }) @IsUUID() clientId: string;
   @ApiPropertyOptional({ description: 'What the emergency is (replaces "Emergency (SOS)")' }) @IsOptional() @IsString() @MaxLength(40) category?: string;
@@ -74,7 +80,7 @@ function ownFile(user: AuthUser, path?: string) {
 @ApiBearerAuth()
 @Controller()
 export class FieldController {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly storage: StorageService) {}
 
   private async live(q: Query, user: AuthUser): Promise<string> {
     const { live } = await elections(q, user.tid);
@@ -166,6 +172,110 @@ export class FieldController {
       p_pu: d.pu, p_registered: d.registered, p_accredited: d.accredited, p_rejected: d.rejected, p_total_valid: d.totalValid,
       p_votes: d.votes, p_photo: d.photoPath ?? null, p_client_id: d.clientId,
     }));
+  }
+
+  // ---- Full-resolution sheet photos ---------------------------------------------------------------------
+  /** Sheet photos the room asked me for in full resolution (the app keeps the originals) */
+  @Get('results/full-photo-requests') @Roles('agent', 'coordinator')
+  fullRequests(@CurrentUser() user: AuthUser) {
+    return this.db.system(
+      `select id, client_id, pu_code from public.result_submissions
+        where volunteer_id = $1 and tenant_id = $2 and full_photo_requested_at is not null and full_photo_path is null and client_id is not null`, [user.mid, user.tid]);
+  }
+
+  @Post('results/:id/full-photo') @HttpCode(204) @Roles('agent', 'coordinator')
+  async fullPhoto(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: FullPhotoDto) {
+    ownFile(user, d.path);
+    const [r] = await this.db.system(
+      `update public.result_submissions set full_photo_path = $3 where id = $1 and volunteer_id = $2 returning id`, [id, user.mid, d.path]);
+    if (!r) throw new BadRequestException('Result not found');
+  }
+
+  // ---- My sheet against IReV ------------------------------------------------------------------------
+  /** IReV sheets of my unit waiting for me to compare (and the ones I answered), with my figures and IReV's read of them */
+  @Get('irev-checks/mine') @Roles('agent', 'coordinator')
+  irevChecks(@CurrentUser() user: AuthUser) {
+    return this.db.asUser(user, (q) => q(
+      `select k.id, k.election_id, k.pu_code, k.status, k.note, k.case_id, k.asked_at, k.answered_at, e.name as election_name, pu.name as pu_name,
+              (select json_build_object('registered', r.registered, 'accredited', r.accredited, 'rejected', r.rejected, 'total_valid', r.total_valid, 'votes', r.votes)
+                 from public.result_submissions r where r.tenant_id = k.tenant_id and r.election_id = k.election_id and r.pu_code = k.pu_code
+                 order by r.version desc limit 1) as mine,
+              (select json_build_object('registered', s.registered, 'accredited', s.accredited, 'rejected', s.rejected, 'total_valid', s.total_valid, 'votes', s.votes, 'status', s.ocr_status)
+                 from public.irev_sheet_results s where s.election_id = k.election_id and s.pu_code = k.pu_code and s.ocr_status in ('read','confirmed')
+                 order by s.sheet_version desc limit 1) as irev
+         from public.irev_unit_checks k join public.elections e on e.id = k.election_id join public.polling_units pu on pu.code = k.pu_code
+        where k.volunteer_id = $1 order by (k.status = 'asked') desc, k.asked_at desc limit 20`, [user.mid]));
+  }
+
+  @Post('irev-checks/:id') @HttpCode(200) @Roles('agent', 'coordinator')
+  @ApiOperation({ summary: 'Answer: the IReV sheet matches my signed sheet, or it is different (opens a case)' })
+  async answerIrev(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() d: IrevAnswerDto) {
+    if (!d.matches && !d.note?.trim()) throw new BadRequestException('Say what is different');
+    const caseId = await this.db.asUser(user, (q) => callFn(q, 'answer_irev_check', { p_id: id, p_matches: d.matches, p_note: d.note?.trim() || null }));
+    // Different: keep our own copy of INEC's sheet with the case, in case it is changed or taken down on IReV
+    if (!d.matches && caseId) void this.keepIrevEvidence(user.tid, id, caseId).catch(() => undefined);
+    return { caseId: caseId ?? null };
+  }
+
+  /** Saves the IReV sheet (if we only had INEC's link) and notes it on the case as evidence */
+  private async keepIrevEvidence(tenant: string, checkId: string, caseId: string) {
+    const [k] = await this.db.system(
+      `select k.election_id, k.pu_code, a.storage_path, a.sheet_url, a.document_url, a.backup_url
+         from public.irev_unit_checks k left join public.irev_availability a on a.election_id = k.election_id and a.pu_code = k.pu_code
+        where k.id = $1 and k.tenant_id = $2`, [checkId, tenant]);
+    if (!k) return;
+    let path: string | null = k.storage_path;
+    if (!path) {
+      const urls = [...new Set([k.sheet_url, k.document_url, k.backup_url].filter((x): x is string => typeof x === 'string' && /^https:\/\//.test(x)))];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000), headers: { 'User-Agent': 'Rumfa evidence' } });
+          if (!r.ok) continue;
+          const type = r.headers.get('content-type') || (url.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+          const ext = type.includes('pdf') ? 'pdf' : type.includes('png') ? 'png' : 'jpg';
+          path = `${k.election_id}/${k.pu_code}/evidence-${Date.now()}.${ext}`;
+          await this.storage.put('irev', path, Buffer.from(await r.arrayBuffer()), type);
+          await this.db.system(`update public.irev_availability set storage_path = coalesce(storage_path, $3) where election_id = $1 and pu_code = $2`,
+            [k.election_id, k.pu_code, path]);
+          break;
+        } catch { path = null; }
+      }
+    }
+    await this.db.system(
+      `insert into public.case_events (tenant_id, case_id, kind, body, data) values ($1, $2, 'note', $3, $4)`,
+      [tenant, caseId, path ? 'IReV sheet saved with this case as evidence' : 'Could not save a copy of the IReV sheet (INEC did not answer)',
+        JSON.stringify({ irev_path: path, election_id: k.election_id, pu: k.pu_code })]);
+  }
+
+  /** The app asks Rumfa to look at IReV for my unit now (a links-only check of my ward; at most every 10 minutes per ward) */
+  @Post('irev/check-mine') @HttpCode(200) @Roles('agent')
+  async checkMine(@CurrentUser() user: AuthUser) {
+    const pu = user.area;
+    if (!/^\d{2}-\d{2}-\d{2}-\d{3}$/.test(pu ?? '')) throw new BadRequestException('Only agents at a polling unit');
+    return this.db.asUser(user, async (q) => {
+      const e = await this.live(q, user);
+      const ward = pu!.slice(0, 8);
+      const [el] = await this.db.system(`select irev_election_id from public.elections where id = $1`, [e]);
+      if (!el?.irev_election_id) return { queued: false, reason: 'INEC has not opened results for this election on IReV yet' };
+      const [recent] = await this.db.system(
+        `select 1 from public.irev_fetch_jobs where election_id = $1 and area_code = any($2) and created_at > now() - interval '10 minutes' limit 1`, [e, [ward, pu!.slice(0, 5), pu!.slice(0, 2)]]);
+      if (recent) return { queued: false, reason: 'Checked a moment ago' };
+      await this.db.system(
+        `insert into public.irev_fetch_jobs (tenant_id, election_id, job_type, area_level, area_code, keep, requested_by) values ($1, $2, 'live', 'ward', $3, 'link', $4)`,
+        [user.tid, e, ward, user.mid]);
+      return { queued: true };
+    });
+  }
+
+  @Get('incidents/mine/:clientId')
+  @ApiOperation({ summary: 'How my report or SOS is being handled: sent, seen by the room, who is on it (the reporter only)' })
+  async myIncident(@CurrentUser() user: AuthUser, @Param('clientId', ParseUUIDPipe) clientId: string) {
+    const [r] = await this.db.system(
+      `select i.reported_at, c.id as case_id, c.status, c.acknowledged_at, c.assigned_to is not null as assigned, v.full_name as handler
+         from public.incidents i left join public.cases c on c.id = i.case_id left join public.volunteers v on v.id = c.assigned_to
+        where i.tenant_id = $1 and i.volunteer_id = $2 and i.client_id = $3`, [user.tid, user.mid, clientId]);
+    if (!r) return null;
+    return { reportedAt: r.reported_at, status: r.status ?? 'queued', seen: !!r.acknowledged_at || !['queued', null].includes(r.status), seenAt: r.acknowledged_at, handler: r.assigned ? r.handler : null };
   }
 
   @Post('incidents/details') @HttpCode(200)

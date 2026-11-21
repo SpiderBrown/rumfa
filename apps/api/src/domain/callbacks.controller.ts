@@ -11,6 +11,7 @@ import { ROOM } from './roles';
 class RequestDto {
   @ApiProperty({ enum: ['form', 'unit', 'app', 'other'] }) @IsIn(['form', 'unit', 'app', 'other']) reason: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) voiceNotePath?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 class CompleteDto {
   @ApiProperty() @IsBoolean() answered: boolean;
@@ -31,7 +32,12 @@ export class CallbacksController {
   @ApiOperation({ summary: 'Ask my coordinator to call me back on my phone line' })
   request(@CurrentUser() u: AuthUser, @Body() d: RequestDto) {
     if (d.voiceNotePath && !d.voiceNotePath.startsWith(`${u.tid}/`)) throw new BadRequestException('Unknown file');
-    return this.db.asUser(u, (q) => callFn(q, 'request_callback', { p_reason: d.reason, p_voice_note: d.voiceNotePath ?? null }));
+    return this.db.asUser(u, async (q) => {
+      const r = await callFn<any>(q, 'request_callback', { p_reason: d.reason, p_voice_note: d.voiceNotePath ?? null });
+      const id = r?.id ?? r?.callback_id;
+      if (d.note?.trim() && id) await this.db.system(`update public.callback_requests set note = $3 where id = $1 and requester_id = $2`, [id, u.mid, d.note.trim()]);
+      return r;
+    });
   }
 
   @Get('mine')
@@ -46,7 +52,7 @@ export class CallbacksController {
   @Get() @Roles('coordinator', ...ROOM)
   list(@CurrentUser() u: AuthUser, @Query('status') status?: string, @Query('mine') mine?: string, @Query('sinceHours') sinceHours?: string) {
     return this.db.asUser(u, (q) => q(
-      `select c.*, json_build_object('full_name', v.full_name, 'phone', v.phone, 'area_code', v.area_code) as requester
+      `select c.*, json_build_object('id', v.id, 'full_name', v.full_name, 'phone', v.phone, 'area_code', v.area_code) as requester
          from public.callback_requests c join public.volunteers v on v.id = c.requester_id
         where c.tenant_id = $1 and ($2::text is null or c.status = any(string_to_array($2, ',')))
           and ($3::boolean is not true or c.assigned_to = $4)

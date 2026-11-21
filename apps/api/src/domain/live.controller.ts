@@ -1,7 +1,7 @@
 import { Body, Controller, ForbiddenException, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
-import { CurrentUser, Roles } from '../auth/decorators';
+import { CurrentUser, Roles, Addon } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { Db } from '../database/db.service';
 import { callFn } from '../common/fn';
@@ -18,6 +18,7 @@ class EndDto { @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) 
 @ApiTags('Live view')
 @ApiBearerAuth()
 @Controller('live-view/:id')
+@Addon('liveVideo')
 export class LiveViewController {
   constructor(private readonly db: Db, private readonly providers: ProvidersService) {}
 

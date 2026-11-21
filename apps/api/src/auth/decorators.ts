@@ -16,6 +16,6 @@ export const CurrentStaff = createParamDecorator((_: unknown, ctx: ExecutionCont
 
 export const ADDON = 'addon';
 /** A premium add-on the client must have switched on (Rumfa Console → client → Add-ons). */
-export const Addon = (addon: 'voice' | 'airtime') => SetMetadata(ADDON, addon);
+export const Addon = (addon: 'voice' | 'airtime' | 'liveVideo' | 'sheetReading') => SetMetadata(ADDON, addon);
 
 export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext): AuthUser => ctx.switchToHttp().getRequest().user);

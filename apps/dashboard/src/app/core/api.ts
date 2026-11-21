@@ -33,6 +33,8 @@ export class Api {
   private session: Session | null = null;
   private refreshing: Promise<boolean> | null = null;
   private socket: Socket | null = null;
+  /** Live updates connected (the apps only poll when they aren't) */
+  readonly live = signal(false);
   private listeners = new Set<(c: Change) => void>();
   private subscriptions = new Set<string>();
 
@@ -48,8 +50,12 @@ export class Api {
   readonly staffStatus = signal<string | null>(null);
   /** Calling options the organisation allows (dashboard → Settings). */
   /** Premium add-ons Rumfa has switched on for this organisation (Rumfa Console) */
-  readonly addons = signal<{ voice: boolean; airtime: boolean }>({ voice: false, airtime: false });
+  readonly addons = signal<{ voice: boolean; airtime: boolean; liveVideo: boolean; sheetReading: boolean }>({ voice: false, airtime: false, liveVideo: true, sheetReading: true });
   /** The client's result rules (Settings → Results): when the vote estimate may be shown */
+  /** The live election, for the top bar */
+  readonly liveElection = signal<{ name: string; election_type: string; status: string; election_date: string } | null>(null);
+  /** Settings → Shifts and assigning */
+  readonly staffing = signal<{ useShifts: boolean; autoAssign: boolean }>({ useShifts: true, autoAssign: true });
   readonly resultRules = signal<{ estimateMinUnits: number; estimatePct: number }>({ estimateMinUnits: 20, estimatePct: 5 });
   readonly callOptions = signal<{ phone: boolean; bridged: boolean; webrtc: boolean; inapp: boolean }>({ phone: true, bridged: true, webrtc: false, inapp: false });
 
@@ -82,14 +88,16 @@ export class Api {
     this.brand.set(ctx.me.brand);
     document.title = `${ctx.me.brand} · Rumfa Room`;
     this.liveElectionId.set(ctx.elections.live);
+    this.liveElection.set(ctx.liveElection ?? null);
     this.baselineElectionId.set(ctx.elections.baseline);
     this.parties.set(ctx.parties);
     this.partyColours.set(ctx.partyColours ?? {});
     this.categories.set(ctx.categories);
     this.staffStatus.set(ctx.staffStatus);
     if (ctx.calls) this.callOptions.set(ctx.calls);
-    this.addons.set(ctx.addons ?? { voice: false, airtime: false });
+    this.addons.set({ voice: false, airtime: false, liveVideo: true, sheetReading: true, ...(ctx.addons ?? {}) });
     if (ctx.rules?.results) this.resultRules.set(ctx.rules.results);
+    if (ctx.rules?.staffing) this.staffing.set(ctx.rules.staffing);
     this.connectLive();
   }
 
@@ -181,6 +189,8 @@ export class Api {
       auth: (cb) => cb({ token: this.session?.accessToken ?? '' }),
     });
     this.socket.on('change', (c: Change) => this.listeners.forEach((l) => l(c)));
+    this.socket.on('connect', () => this.live.set(true));
+    this.socket.on('disconnect', () => this.live.set(false));
     this.socket.on('connect', () => this.subscriptions.forEach((s) => this.socket!.emit('subscribe', JSON.parse(s))));
     // The server drops the connection when the token expires: refresh, then reconnect
     this.socket.on('disconnect', async (reason) => {

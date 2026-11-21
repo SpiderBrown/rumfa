@@ -7,6 +7,7 @@ import { Db } from '../database/db.service';
 import { normaliseNgPhone } from '../shared';
 import { callFn } from '../common/fn';
 import { ROOM } from './roles';
+import { withCasePlaces } from './case-places';
 
 class ContactDto {
   @ApiProperty() @IsString() @MaxLength(120) agency: string;
@@ -28,12 +29,13 @@ export class ContactsController {
   constructor(private readonly db: Db) {}
 
   @Get()
-  list(@CurrentUser() u: AuthUser, @Query('area') area?: string, @Query('status') status?: string) {
-    return this.db.asUser(u, (q) => q(
+  async list(@CurrentUser() u: AuthUser, @Query('area') area?: string, @Query('status') status?: string) {
+    // With each one's place by name
+    return (await withCasePlaces(this.db, await this.db.asUser(u, (q) => q(
       `select * from public.authority_contacts
         where (tenant_id = $1 or tenant_id is null) -- with the official ones Rumfa keeps for every client
           and ($2::text is null or area_code like $2 || '%') and ($3::text is null or status = any(string_to_array($3, ',')))
-        order by area_code, agency limit 2000`, [u.tid, area || null, status || null]));
+        order by area_code, agency limit 2000`, [u.tid, area || null, status || null])))).map(({ what, ...k }) => k);
   }
 
   @Post()

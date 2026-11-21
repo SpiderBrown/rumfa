@@ -49,7 +49,8 @@ export class Inbox {
     this.started = true;
     void this.load();
     this.api.onChange(() => this.soon(), ['messages', 'channels', 'callback_requests', 'calls']);
-    setInterval(() => void this.load(), 120_000);
+    let n = 0;
+    setInterval(() => { n++; if (!this.api.live() || n % 5 === 0) void this.load(); }, 120_000);
   }
   soon() { this.timer ??= setTimeout(() => { this.timer = null; void this.load(); }, 800); }
   async load() {

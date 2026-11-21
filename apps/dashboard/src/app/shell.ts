@@ -8,6 +8,8 @@ import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Api } from './core/api';
 import { Calls } from './core/calls';
+import { GroupCall } from './core/group-call';
+import { SearchBox } from './core/search-box';
 import { Inbox } from './core/inbox';
 import { Ui, label } from './core/ui';
 
@@ -26,6 +28,7 @@ const NAV: NavGroup[] = [
   // One page for the day; its detailed views (check-ins, figures, live count, results, full map) open from it
   { title: 'Election day', items: [
     { path: '/election-day', icon: 'how_to_vote', text: 'Election day', roles: WATCH },
+    { path: '/results', icon: 'bar_chart', text: 'Results', roles: ['analyst', 'supervisor', 'admin', 'legal', 'operator'] },
   ] },
   { title: 'Results data', items: [
     { path: '/irev', icon: 'cloud_download', text: 'IReV data', roles: ['analyst', 'supervisor', 'admin'], exact: true },
@@ -44,7 +47,7 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
 
 @Component({
   selector: 'app-shell',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, MatSidenavModule, MatToolbarModule, MatIconModule,
+  imports: [SearchBox, RouterOutlet, RouterLink, RouterLinkActive, MatSidenavModule, MatToolbarModule, MatIconModule,
     MatButtonModule, MatButtonToggleModule, MatTooltipModule],
   template: `
   <mat-sidenav-container class="shell" autosize>
@@ -73,8 +76,12 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
     <mat-sidenav-content>
       <mat-toolbar class="top">
         @if (api.isSupport()) { <span class="support" title="Signed in from Rumfa Console to help this client. Sign out to open another client.">Rumfa support access</span> }
-        <span class="who">{{ api.me()?.full_name }} · {{ label(api.me()?.role) }} · {{ api.me()?.area_code }}</span>
+        @if (api.isRoom()) { <app-search-box /> }
         <span class="spacer"></span>
+        @if (api.liveElection(); as e) {
+          <span class="live" [class.on]="e.status === 'live' || e.status === 'collation'" [matTooltip]="e.election_date">
+            <i aria-hidden="true"></i>{{ e.status === 'live' ? 'Live' : e.status === 'collation' ? 'Collation' : e.status === 'closed' ? 'Closed' : 'Upcoming' }} · {{ e.name }}</span>
+        }
         @if (calls.active(); as c) {
           @switch (c.phase) {
             @case ('incoming') {
@@ -94,6 +101,12 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
             }
           }
         }
+        @if (group.state(); as g) {
+          <span class="oncall"><mat-icon>groups</mat-icon> {{ g.title }} · {{ group.joined().length }} joined{{ group.ringing().length ? ', ' + group.ringing().length + ' ringing' : '' }}</span>
+          @if (group.missed().length && g.canPhone) { <button mat-stroked-button (click)="group.phoneMissed()">Phone {{ group.missed().length }}</button> }
+          <button mat-stroked-button (click)="group.toggleMute()">{{ group.muted() ? 'Unmute' : 'Mute' }}</button>
+          <button mat-flat-button (click)="group.end()">End call</button>
+        }
         @if (api.isRoom()) {
           <mat-button-toggle-group [value]="status()" (change)="setStatus($event.value)" hideSingleSelectionIndicator>
             <mat-button-toggle value="available">Available</mat-button-toggle>
@@ -101,6 +114,7 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
             <mat-button-toggle value="offline">Offline</mat-button-toggle>
           </mat-button-toggle-group>
         }
+        <span class="who" [matTooltip]="label(api.me()?.role) + ' · ' + api.me()?.area_code">{{ api.me()?.full_name }}</span>
         <button mat-icon-button matTooltip="Sign out" (click)="signOut()"><mat-icon>logout</mat-icon></button>
       </mat-toolbar>
       <main class="content"><router-outlet /></main>
@@ -133,7 +147,12 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
     .item.active { background: var(--r-accent); color: #fff; font-weight: 600; } .item.active mat-icon { color: #fff; }
     .support { background: #fff1e0; border: 1px solid #fb923c; color: #7a3d00; border-radius: 12px; padding: 2px 10px; font-size: 12px; margin-right: 8px; }
     .top { position: sticky; top: 0; z-index: 2; gap: 12px; height: 56px; background: #fff; border-bottom: 1px solid var(--r-line); font: var(--mat-sys-body-medium); }
-    .who { color: var(--mat-sys-on-surface-variant); }
+    .who { color: var(--r-ink-2); font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .live { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--r-low-bg); color: var(--r-ink-2);
+      font-size: 12.5px; font-weight: 700; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+    .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--r-muted); flex: none; }
+    .live.on { background: #e3f4ea; color: #146c3a; } .live.on i { background: #1f9d55; }
+    @media (max-width: 1100px) { .live, .who { display: none; } }
     .spacer { flex: 1; }
     .oncall { display: flex; align-items: center; gap: 4px; color: var(--mat-sys-primary); }
     .oncall.ring { color: var(--mat-sys-tertiary); font-weight: 600; }
@@ -143,6 +162,7 @@ function readFold() { try { return localStorage.getItem('rumfa.nav.slim') === '1
 export class Shell {
   api = inject(Api);
   calls = inject(Calls);
+  group = inject(GroupCall);
   private ui = inject(Ui);
   private router = inject(Router);
   label = label;
@@ -172,6 +192,7 @@ export class Shell {
     // App calls ringing for me, answered or ended
     this.stopCalls = this.api.onChange((c) => this.calls.onCallChange(c), ['calls']);
     void this.calls.checkIncoming();
+    this.calls.watch();
     // Unread messages on the menu, from anywhere in the Room
     this.inbox.start();
     inject(DestroyRef).onDestroy(() => this.stopCalls());

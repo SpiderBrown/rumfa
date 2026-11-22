@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Rumfa Agent",
+  "short_name": "Rumfa Agent",
+  "description": "Rumfa Agent helps field teams report polling day activity and stay connected.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f4f6",
+  "theme_color": "#f3f4f6",
+  "icons": [
+    {
+      "src": "/icons/agent-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/agent-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

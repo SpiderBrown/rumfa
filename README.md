@@ -152,7 +152,10 @@ The worker and scripts use the API's `.env`. The first tenant (with `settings.br
 Each app has a `public/config.js` with no secrets; it only says where the API is.
 
 - **Rumfa Room** (`apps/dashboard`): `apiUrl`, the `tenantId` of the client this site belongs to, and its `brand`. Host the same build on each client's domain with its own `config.js`. Staff sign in with email + password (+ authenticator code where required); admins send invite links from the People page.
+- **Rumfa Console** (`apps/console`): platform administration site for Rumfa staff.
 - **Rumfa Agent** (`apps/agent`): `apiUrl`, the SMS fallback number and the helpline. One app for every client: a phone is activated once (SMS code, WhatsApp code, or a coordinator's activation code from the People or My team page) and then opened with the 6-digit PIN; people working for several clients pick one, and can switch from Help.
+
+Rumfa Agent, Rumfa Room and Rumfa Console can be installed as PWAs from their HTTPS sites. On iPhone, open a site in Safari and choose **Share → Add to Home Screen**. Codemagic builds each web app separately; the output is a static site folder (`dist/<app>/browser`) that must be hosted at the root of its own HTTPS site. The service worker caches the app shell and static assets; API features require an internet connection.
 
 ```bash
 cd apps/dashboard && npm install && npm start          # http://localhost:4200

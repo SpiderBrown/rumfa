@@ -36,6 +36,16 @@ ng build
 
 This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
 
+## Install on phones as a PWA
+
+Build the browser version with `npm run build`. The static site is written to `dist/agent/browser`.
+Publish the contents of that folder at the root of an HTTPS site, with unknown page paths falling back to
+`index.html`. The app includes a web manifest and service worker for installation and cached app-shell use.
+
+On iPhone, open the site in Safari, tap **Share**, then **Add to Home Screen**. Agents can install it without
+App Store Connect or TestFlight. API access still requires an internet connection; the service worker only
+caches the app shell and static assets.
+
 ## Running unit tests
 
 To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:

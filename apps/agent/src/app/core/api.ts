@@ -1,4 +1,5 @@
 import { Injectable, computed, signal } from '@angular/core';
+import { Capacitor } from '@capacitor/core';
 import { io, type Socket } from 'socket.io-client';
 
 declare global {
@@ -77,7 +78,7 @@ export class Api {
 
   /** Activates this phone (code from SMS/WhatsApp, or a coordinator's activation code) and sets the PIN. */
   async activate(phone: string, pin: string, proof: { code?: string; activationCode?: string }): Promise<SignIn> {
-    const r = await this.call<any>('POST', '/auth/activate/verify', { phone, pin, platform: 'android', deviceName: navigator.userAgent.slice(0, 80), ...proof }, false);
+    const r = await this.call<any>('POST', '/auth/activate/verify', { phone, pin, platform: Capacitor.getPlatform(), deviceName: navigator.userAgent.slice(0, 80), ...proof }, false);
     this.device = { phone, deviceId: r.deviceId, deviceSecret: r.deviceSecret };
     localStorage.setItem(K.device, JSON.stringify(this.device));
     return this.after(r);

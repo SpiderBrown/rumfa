@@ -1,0 +1,83 @@
+workflows:
+  agent-pwa-build:
+    name: Rumfa Agent PWA build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: apps/agent
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    when:
+      changeset:
+        includes:
+          - apps/agent/**
+          - shared/**
+          - codemagic.yaml
+    environment:
+      node: 22
+    scripts:
+      - name: Install agent dependencies
+        script: npm ci
+      - name: Build installable web app
+        script: npm run build
+    artifacts:
+      - apps/agent/dist/agent/browser/**
+
+  dashboard-pwa-build:
+    name: Rumfa Room PWA build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: apps/dashboard
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    when:
+      changeset:
+        includes:
+          - apps/dashboard/**
+          - shared/**
+          - codemagic.yaml
+    environment:
+      node: 22
+    scripts:
+      - name: Install dashboard dependencies
+        script: npm ci
+      - name: Build installable web app
+        script: npm run build
+    artifacts:
+      - apps/dashboard/dist/dashboard/browser/**
+
+  console-pwa-build:
+    name: Rumfa Console PWA build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: apps/console
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    when:
+      changeset:
+        includes:
+          - apps/console/**
+          - codemagic.yaml
+    environment:
+      node: 22
+    scripts:
+      - name: Install console dependencies
+        script: npm ci
+      - name: Build installable web app
+        script: npm run build
+    artifacts:
+      - apps/console/dist/console/browser/**
